@@ -1,0 +1,19 @@
+[package]
+name = "koclaw-channels"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["telegram"]
+telegram = ["dep:reqwest"]
+qq = ["dep:reqwest"]
+discord = ["dep:reqwest"]
+
+[dependencies]
+koclaw-common = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+reqwest = { workspace = true, optional = true }

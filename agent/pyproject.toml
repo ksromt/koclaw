@@ -1,0 +1,41 @@
+[project]
+name = "koclaw-agent"
+version = "0.1.0"
+description = "Koclaw AI Agent — LLM routing, tools, memory, and voice pipeline"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.33",
+    "websockets>=14",
+    "anthropic>=0.40",
+    "openai>=1.57",
+    "pydantic>=2.0",
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+local = [
+    "ollama>=0.4",
+]
+voice = [
+    "sherpa-onnx>=1.10",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

@@ -1,0 +1,9 @@
+# Cargo configuration for Koclaw
+#
+# Note: On Windows without VS Build Tools, use Docker to build:
+#   docker compose build gateway
+#
+# If VS Build Tools are installed, cargo build works directly.
+# If using MinGW/MSYS2, uncomment the following:
+# [target.x86_64-pc-windows-gnu]
+# linker = "x86_64-w64-mingw32-gcc"

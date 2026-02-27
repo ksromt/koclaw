@@ -1,0 +1,40 @@
+# Koclaw Full Stack - Docker Compose
+# Usage: docker compose up --build
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: koclaw-gateway
+    ports:
+      - "18789:18789"
+    environment:
+      - KOCLAW_LOG_LEVEL=info
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - QQ_BOT_APP_ID=${QQ_BOT_APP_ID:-}
+      - QQ_BOT_SECRET=${QQ_BOT_SECRET:-}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+    volumes:
+      - gateway-workspace:/home/koclaw/workspace
+    depends_on:
+      agent:
+        condition: service_started
+    restart: unless-stopped
+
+  agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: koclaw-agent
+    ports:
+      - "18790:18790"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - KOCLAW_DEFAULT_PROVIDER=${KOCLAW_DEFAULT_PROVIDER:-anthropic}
+    restart: unless-stopped
+
+volumes:
+  gateway-workspace:

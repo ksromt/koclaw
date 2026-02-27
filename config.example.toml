@@ -1,0 +1,59 @@
+# Koclaw Configuration
+# Copy this file to config.toml and adjust as needed.
+# Secrets can be set via environment variables (preferred) or directly in this file.
+
+[gateway]
+host = "127.0.0.1"
+port = 18789
+agent_url = "ws://127.0.0.1:18790"
+log_level = "info"  # trace, debug, info, warn, error
+
+# Sandbox configuration for agent tool execution
+[gateway.sandbox]
+workspace_root = "./workspace"
+# Commands the agent is allowed to execute (allowlist)
+allowed_commands = ["git", "python", "pip", "uv", "node", "npm", "curl", "ping"]
+# Maximum file size the agent can create (bytes)
+max_file_size = 10485760  # 10MB
+
+[channels.telegram]
+enabled = true
+# Use environment variable for token (recommended)
+token_env = "TELEGRAM_BOT_TOKEN"
+# Or set directly (NOT recommended for production)
+# token = "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+mode = "polling"  # "polling" for development, "webhook" for production
+# webhook_url = "https://your-domain.com/webhook/telegram"
+# Restrict to specific user IDs (empty = allow all)
+# allowed_users = [123456789]
+
+[channels.qq]
+enabled = false
+app_id_env = "QQ_BOT_APP_ID"
+secret_env = "QQ_BOT_SECRET"
+sandbox = true  # Use sandbox environment for testing
+
+[channels.discord]
+enabled = false
+token_env = "DISCORD_BOT_TOKEN"
+
+# LLM provider configuration (used by Python Agent)
+[providers]
+default = "anthropic"
+
+[providers.anthropic]
+api_key_env = "ANTHROPIC_API_KEY"
+model = "claude-sonnet-4-20250514"
+
+[providers.openai]
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4o"
+
+[providers.deepseek]
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-chat"
+base_url = "https://api.deepseek.com/v1"
+
+[providers.ollama]
+base_url = "http://localhost:11434"
+model = "llama3"
