@@ -226,7 +226,7 @@ enabled = true
 token_env = "TELEGRAM_BOT_TOKEN"   # Prefer env vars over inline tokens
 mode = "polling"                    # "polling" (dev) or "webhook" (prod)
 # webhook_url = "https://your-domain.com/webhook/telegram"
-# allowed_users = []               # Empty = allow all users
+allowed_users = [7858557183]               # Empty = allow all users
 
 [channels.qq]
 enabled = false
@@ -268,10 +268,10 @@ KOCLAW_SANDBOX_ROOT=./workspace  # Agent sandbox root directory
 
 | Channel     | Protocol                | Status         | Permission Level | Notes                                     |
 |-------------|-------------------------|----------------|------------------|--------------------------------------------|
-| Telegram    | Bot API (polling/webhook)| In Progress    | Authenticated   | Text, voice, images, files, inline keyboards |
-| QQ          | Official Bot API (WS+REST)| In Progress  | Authenticated   | Guild messages, DMs, rich cards             |
-| Discord     | Bot API (gateway WS)   | In Progress    | Authenticated   | Text, voice channels, slash commands        |
-| WebSocket   | Raw WebSocket           | Planned        | Authenticated   | Desktop companion connection                |
+| Telegram    | Bot API (polling/webhook)| ✅ Implemented | Authenticated   | Text, voice, images, files, inline keyboards |
+| QQ          | Official Bot API (WS+REST)| ✅ Implemented | Authenticated   | Guild messages, DMs, rich cards             |
+| Discord     | Bot API (gateway WS)   | ✅ Implemented  | Authenticated   | Text, voice channels, slash commands        |
+| WebSocket   | Raw WebSocket (port 18791)| ✅ Implemented | Authenticated   | Desktop/Web companion connection            |
 | Web Public  | REST + SSE              | Planned        | Public           | Blog widget chat (shinBlog integration)     |
 
 ### Permission Levels
@@ -288,10 +288,10 @@ KOCLAW_SANDBOX_ROOT=./workspace  # Agent sandbox root directory
 
 | Provider     | Streaming | Vision  | Tool Use | Status         |
 |--------------|-----------|---------|----------|----------------|
-| Claude (Anthropic) | Yes  | Yes     | Yes      | Planned        |
-| OpenAI (GPT) | Yes      | Yes     | Yes      | Planned        |
-| DeepSeek     | Yes       | Yes     | Yes      | Planned        |
-| Ollama (Local) | Yes    | Model-dependent | Model-dependent | Planned |
+| Claude (Anthropic) | Yes  | Yes     | Yes      | ✅ Implemented |
+| OpenAI (GPT) | Yes      | Yes     | Yes      | ✅ Implemented |
+| DeepSeek     | Yes       | Yes     | Yes      | ✅ Implemented |
+| Ollama (Local) | Yes    | Model-dependent | Model-dependent | ✅ Implemented |
 
 Provider selection is config-driven. The Agent routes requests to the appropriate provider based on configuration and optionally per-channel overrides.
 
@@ -431,7 +431,7 @@ For the full development guide, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 - [x] Docker Compose deployment (Gateway + Agent)
 - [ ] End-to-end integration tests
 
-### Phase 2 -- Security, Discord, Memory & Persona (Current)
+### Phase 2 -- Security, Discord, Memory & Persona ✅
 
 - [x] X25519 key exchange with HKDF-SHA256 session key derivation (4 tests)
 - [x] Discord channel implementation (WebSocket Gateway + REST API)
@@ -439,15 +439,27 @@ For the full development guide, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 - [x] Persona system with per-channel identity management (4 tests)
 - [x] Tool sandbox with path validation and command allowlist (6 tests)
 - [x] Persona + Sandbox wired into Agent Bridge protocol
-- [ ] Voice pipeline integration (ASR/TTS from AIKokoron)
-- [ ] True zero-knowledge E2E encryption (Agent-held keys)
 
-### Phase 3 -- Web SDK, Desktop, and Advanced Features
+### Phase 3 -- AIKokoron Integration ✅
 
-- [ ] Web SDK (`@koclaw/web-widget`) for shinBlog integration
+- [x] Unified persona YAML (`persona.yaml`) — single config for Rust and Python
+- [x] Conversation memory system (FileMemory with JSON per session, 7 tests)
+- [x] Expression extraction for Live2D animation (`[joy]`, `[anger]`, etc., 7 tests)
+- [x] GPT-SoVITS TTS (HTTP client to external server)
+- [x] Faster-Whisper ASR (local speech-to-text with lazy loading)
+- [x] WebSocket channel for Desktop/Web clients (port 18791)
+- [x] Extended bridge protocol (audio data + expressions in response chunks)
+- [x] Static file server for Live2D models (axum, port 18792)
+- [x] Frontend adapter config (`desktop/koclaw-config.json`)
+- [x] Integration tests (14 Python tests: expression + memory)
+
+### Phase 4 -- Web SDK, Desktop Polish, and Advanced Features (Next)
+
+- [ ] Web SDK (`@koclaw/web-widget`) for shinBlog integration (API spec ready)
 - [ ] Live2D avatar embedding for web
 - [ ] RAG knowledge base integration
-- [ ] Desktop companion application (Electron + Live2D)
+- [ ] Desktop companion application full integration (Electron + Live2D)
+- [ ] True zero-knowledge E2E encryption (Agent-held keys)
 - [ ] Multi-agent orchestration
 - [ ] Workflow visualization dashboard
 - [ ] Double Ratchet forward secrecy

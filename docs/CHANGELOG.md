@@ -134,20 +134,85 @@ Phase 2: Security, Discord, Memory & Persona
 
 ---
 
+## [0.3.0] - Unreleased
+
+Phase 3: AIKokoron Integration (Voice, Memory, Expression, WebSocket)
+
+### Added
+
+- **Unified Persona YAML** (`persona.yaml`)
+  - Single source of truth for Kokoron identity across Rust and Python runtimes.
+  - `Persona::from_yaml()` in Rust (`serde_yaml`), `Persona.from_yaml_file()` in Python (`pyyaml`).
+  - Channel-specific prompt overrides, Live2D expression mapping, voice config.
+  - 4 additional persona unit tests (YAML full, minimal, unknown channel, invalid).
+
+- **Conversation Memory System** (`agent/koclaw_agent/memory/`)
+  - `BaseMemory` abstract base class with `get_history()`, `add_message()`, `clear_history()`, `list_sessions()`.
+  - `FileMemory` implementation: JSON file per session with `asyncio.Lock` for thread-safety.
+  - Safe session ID naming (colons → underscores for file-safe paths).
+  - History injected into LLM context via updated provider interfaces.
+  - 7 unit tests: add/get, separate sessions, empty, limit, clear, colon IDs, list sessions.
+
+- **Expression Extraction** (`agent/koclaw_agent/expression.py`)
+  - Regex-based extraction of known expression tags: `[joy]`, `[anger]`, `[sadness]`, `[surprise]`, `[thinking]`, `[neutral]`.
+  - Unknown tags preserved in clean text, known tags stripped.
+  - Case-insensitive matching.
+  - 7 unit tests: single, multiple, none, unknown, all known, case insensitive, empty.
+
+- **GPT-SoVITS TTS** (`agent/koclaw_agent/voice/gpt_sovits.py`)
+  - HTTP client calling external GPT-SoVITS server (default: `http://127.0.0.1:9880/tts`).
+  - Support for reference WAV for voice cloning.
+  - Async interface via `httpx.AsyncClient`.
+
+- **Faster-Whisper ASR** (`agent/koclaw_agent/voice/faster_whisper_asr.py`)
+  - Local speech-to-text with lazy model loading.
+  - CPU-bound transcription offloaded via `asyncio.get_running_loop().run_in_executor()`.
+  - Configurable model size and compute type.
+
+- **WebSocket Channel** (`channels/src/websocket_channel.rs`)
+  - `WebSocketChannel` implementing `Channel` trait on port 18791.
+  - Client connection tracking with `Arc<RwLock<HashMap>>`.
+  - Protocol: `text-input` → Gateway routing → `full-text` response.
+  - Feature-gated (`websocket` feature flag).
+
+- **Extended Bridge Protocol** (`gateway/src/agent_bridge.rs`, `gateway/src/router.rs`)
+  - `AgentResponseChunk` extended with `data`, `format`, `expressions` fields.
+  - Router captures audio data and expressions from agent stream.
+  - WebSocket clients receive audio as `Attachment` in `OutgoingMessage`.
+
+- **Static File Server** (`gateway/src/static_server.rs`)
+  - axum + tower-http `ServeDir` with permissive CORS.
+  - Serves Live2D models and voice assets on port 18792.
+  - Config-driven via `[gateway.static_files]` in TOML.
+
+- **Frontend Adapter** (`desktop/koclaw-config.json`)
+  - Connection config for AIKokoron Electron app.
+  - WebSocket URL (port 18791) + static assets URL (port 18792).
+
+- **Agent Bridge Enhancements** (`agent/koclaw_agent/bridge.py`)
+  - Memory integration: load/save history per session.
+  - Persona initialization on bridge startup.
+  - Expression extraction on LLM responses.
+  - TTS synthesis after text response (when `audio_response=True`).
+  - ASR transcription for `audio_input` message type.
+  - Graceful degradation when voice deps missing (`try/except ImportError`).
+
+- **LLM Provider Updates** (`agent/koclaw_agent/providers/`)
+  - `history` parameter added to `BaseProvider.generate()`, `OpenAIProvider`, `AnthropicProvider`.
+  - History injected between system prompt and current user message.
+
+---
+
 ## Future Releases
 
-### [0.3.0] - Planned
+### [0.4.0] - Planned
 
-Phase 3: Web SDK, Desktop, and Advanced Features
+Phase 4: Web SDK, Desktop Polish, and Advanced Features
 
-### [0.3.0] - Planned
-
-Phase 3: Web SDK, Desktop, and Advanced Features
-
-- Web SDK (`@koclaw/web-widget`) for shinBlog integration.
+- Web SDK (`@koclaw/web-widget`) for shinBlog integration (API spec ready at `docs/api/web-sdk-api.md`).
 - Live2D avatar embedding for web.
 - RAG knowledge base integration.
-- Desktop companion application (Electron + Live2D).
+- Desktop companion application (Electron + Live2D) full integration.
 - Multi-agent orchestration.
 - Workflow visualization dashboard.
 - Double Ratchet forward secrecy.

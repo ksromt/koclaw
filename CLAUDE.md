@@ -95,12 +95,51 @@ koclaw/
 - Channel-specific setup guides go in `docs/channels/`
 - Update this CLAUDE.md when project conventions change
 
+## Implementation Status
+
+| Phase | Status | Commit | Tests |
+|-------|--------|--------|-------|
+| Phase 1: Gateway Core + Channels | ✅ Complete | `421fb2d`..`60cb166` | 31 Rust |
+| Phase 2: Security, Discord, Memory & Persona | ✅ Complete | `408342f` | 35 Rust |
+| Phase 3: AIKokoron Integration | ✅ Complete | `bbd15a2` | 35 Rust + 14 Python |
+
+### Phase 3 Key Components
+- **Unified Persona**: `persona.yaml` — single YAML config for both Rust and Python runtimes
+- **Conversation Memory**: `agent/koclaw_agent/memory/` — FileMemory (JSON per session)
+- **Expression System**: `agent/koclaw_agent/expression.py` — `[joy]`, `[anger]` tag extraction for Live2D
+- **Voice Pipeline**: `agent/koclaw_agent/voice/` — GPT-SoVITS TTS + Faster-Whisper ASR (optional deps)
+- **WebSocket Channel**: `channels/src/websocket_channel.rs` — port 18791 for Desktop/Web
+- **Static File Server**: `gateway/src/static_server.rs` — port 18792 for Live2D assets
+- **Frontend Config**: `desktop/koclaw-config.json` — AIKokoron Electron connection config
+
+### Port Map
+| Port | Service |
+|------|---------|
+| 18789 | Gateway HTTP API |
+| 18790 | Gateway ↔ Agent WebSocket bridge |
+| 18791 | WebSocket channel (Desktop/Web clients) |
+| 18792 | Static file server (Live2D models, voice assets) |
+
+### Pending (Not Yet Implemented)
+- Web SDK (`@koclaw/web-widget` npm package) — API docs ready, no source code yet
+- True zero-knowledge E2E encryption (Agent-held keys)
+- RAG knowledge base integration
+- Multi-agent orchestration
+- Double Ratchet forward secrecy
+
 ## Related Projects
 
 | Project | Path | Relationship |
 |---------|------|-------------|
 | AIKokoron | `D:\personal_development\AI_assistant\AIKokoron` | Source of Agent logic, TTS/ASR pipeline, Live2D frontend |
 | shinBlog | `D:\personal_development\shinBlog` | External consumer of Koclaw SDK (web widget + chat API) |
+
+### Cross-Project References for shinBlog
+When working on shinBlog and need to integrate with Koclaw:
+- **API Reference**: `D:\personal_development\Koclaw\docs\api\gateway-api.md` (612 lines, complete WebSocket/SSE protocol)
+- **Web SDK Spec**: `D:\personal_development\Koclaw\docs\api\web-sdk-api.md` (596 lines, React component API design)
+- **Integration Guide**: `D:\personal_development\Koclaw\docs\integration\shinblog-integration.md` (example Next.js proxy route)
+- **Persona Config**: `D:\personal_development\Koclaw\persona.yaml` (Kokoron identity and voice settings)
 
 ## Tech Stack
 
