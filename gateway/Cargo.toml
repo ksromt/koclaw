@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 koclaw-common = { workspace = true }
-koclaw-channels = { workspace = true }
+koclaw-channels = { workspace = true, features = ["telegram", "qq"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

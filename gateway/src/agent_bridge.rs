@@ -1,11 +1,12 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use koclaw_common::message::IncomingMessage;
 
@@ -30,7 +31,7 @@ pub struct AttachmentPayload {
 }
 
 /// Response chunk from Python Agent.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AgentResponseChunk {
     #[serde(rename = "type")]
     pub msg_type: String,
@@ -38,7 +39,15 @@ pub struct AgentResponseChunk {
     pub content: Option<String>,
 }
 
+/// Pending response senders keyed by session_id.
+type PendingResponses = Arc<RwLock<HashMap<String, mpsc::Sender<AgentResponseChunk>>>>;
+
 /// Bridge to the Python Agent process via WebSocket.
+///
+/// The bridge maintains a single WebSocket connection to the Agent.
+/// When `chat()` is called, it sends a request and registers a response
+/// channel keyed by session_id. The background receiver task dispatches
+/// incoming chunks to the appropriate waiting caller.
 pub struct AgentBridge {
     agent_url: String,
     sender: Arc<Mutex<Option<futures_util::stream::SplitSink<
@@ -47,6 +56,7 @@ pub struct AgentBridge {
         >,
         Message
     >>>>,
+    pending: PendingResponses,
 }
 
 impl AgentBridge {
@@ -54,6 +64,7 @@ impl AgentBridge {
         Self {
             agent_url,
             sender: Arc::new(Mutex::new(None)),
+            pending: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -68,13 +79,16 @@ impl AgentBridge {
         let (sender, mut receiver) = ws_stream.split();
         *self.sender.lock().await = Some(sender);
 
+        // Clone pending map for the receiver task
+        let pending = self.pending.clone();
+
         // Spawn a task to handle incoming messages from agent
         tokio::spawn(async move {
             while let Some(msg) = receiver.next().await {
                 match msg {
                     Ok(Message::Text(text)) => {
                         debug!(text = %text, "Received from Agent");
-                        // TODO: Route response back to the originating channel
+                        Self::dispatch_response(&pending, &text).await;
                     }
                     Ok(Message::Close(_)) => {
                         info!("Agent connection closed");
@@ -87,13 +101,61 @@ impl AgentBridge {
                     _ => {}
                 }
             }
+
+            // Connection lost — clean up all pending senders
+            let mut map = pending.write().await;
+            map.clear();
+            warn!("Agent connection lost, cleared pending responses");
         });
 
         info!("Connected to Agent");
         Ok(())
     }
 
-    /// Send a chat request to the Agent and collect the streamed response.
+    /// Dispatch a response chunk from the Agent to the waiting caller.
+    async fn dispatch_response(pending: &PendingResponses, text: &str) {
+        let chunk: AgentResponseChunk = match serde_json::from_str(text) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!(error = %e, "Failed to parse Agent response");
+                return;
+            }
+        };
+
+        let session_id = match &chunk.session_id {
+            Some(id) => id.clone(),
+            None => {
+                debug!("Agent response has no session_id, ignoring");
+                return;
+            }
+        };
+
+        let is_done = chunk.msg_type == "done" || chunk.msg_type == "error";
+
+        // Send chunk to the waiting caller
+        let map = pending.read().await;
+        if let Some(tx) = map.get(&session_id) {
+            if tx.send(chunk).await.is_err() {
+                debug!(session_id, "Response receiver dropped");
+            }
+        } else {
+            debug!(session_id, "No pending handler for session");
+        }
+        drop(map);
+
+        // If this was the final chunk, remove from pending
+        if is_done {
+            let mut map = pending.write().await;
+            map.remove(&session_id);
+        }
+    }
+
+    /// Send a chat request to the Agent and get a streaming response receiver.
+    ///
+    /// The returned receiver yields `AgentResponseChunk`s:
+    /// - `text_chunk`: partial text response
+    /// - `done`: final chunk, signals completion
+    /// - `error`: an error occurred
     pub async fn chat(
         &self,
         message: &IncomingMessage,
@@ -118,22 +180,25 @@ impl AgentBridge {
 
         let json = serde_json::to_string(&request)?;
 
-        let mut sender_guard = self.sender.lock().await;
-        if let Some(sender) = sender_guard.as_mut() {
-            sender
-                .send(Message::Text(json.into()))
-                .await
-                .context("Failed to send message to Agent")?;
-        } else {
-            anyhow::bail!("Not connected to Agent");
+        // Register a response channel BEFORE sending the request
+        let (tx, rx) = mpsc::channel(32);
+        {
+            let mut map = self.pending.write().await;
+            map.insert(message.session_id.clone(), tx);
         }
 
-        // Create a channel for streaming response chunks
-        let (tx, rx) = mpsc::channel(32);
-
-        // TODO: Wire up the receiver from the WebSocket to this channel
-        // For now, drop the sender which will signal "done" to the receiver
-        drop(tx);
+        // Send the request
+        let mut sender_guard = self.sender.lock().await;
+        if let Some(sender) = sender_guard.as_mut() {
+            if let Err(e) = sender.send(Message::Text(json.into())).await {
+                // Remove pending on send failure
+                self.pending.write().await.remove(&message.session_id);
+                return Err(e).context("Failed to send message to Agent");
+            }
+        } else {
+            self.pending.write().await.remove(&message.session_id);
+            anyhow::bail!("Not connected to Agent");
+        }
 
         Ok(rx)
     }

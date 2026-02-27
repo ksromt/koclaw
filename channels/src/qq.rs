@@ -97,7 +97,7 @@ impl QQChannel {
     }
 
     /// Connect to QQ WebSocket gateway for receiving events.
-    pub async fn start_websocket(&self, router: Arc<dyn MessageRouter>) -> Result<()> {
+    pub async fn start_websocket(&self, _router: Arc<dyn MessageRouter>) -> Result<()> {
         info!(sandbox = self.sandbox, "QQ channel starting");
 
         // Get WebSocket gateway URL

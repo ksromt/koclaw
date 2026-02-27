@@ -1,7 +1,10 @@
 // Suppress dead_code warnings to work around rustc 1.93.1 ICE in check_mod_deathness
 #![allow(dead_code)]
 
+use std::sync::Arc;
+
 use anyhow::Result;
+use koclaw_common::channel::Channel;
 use tracing::{error, info};
 
 mod agent_bridge;
@@ -38,7 +41,9 @@ async fn main() -> Result<()> {
     );
 
     // Connect to Python Agent
-    let bridge = agent_bridge::AgentBridge::new(config.gateway.agent_url.clone());
+    let bridge = Arc::new(agent_bridge::AgentBridge::new(
+        config.gateway.agent_url.clone(),
+    ));
     match bridge.connect().await {
         Ok(()) => info!("Agent bridge connected"),
         Err(e) => {
@@ -46,14 +51,27 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Create router with agent bridge
+    let router = Arc::new(router::Router::new(bridge));
+
     // Start enabled channels
     if let Some(ref tg) = config.channels.telegram {
         if tg.enabled {
             match tg.resolve_token() {
                 Ok(token) => {
                     info!(mode = %tg.mode, "Starting Telegram channel");
-                    // TODO: Start Telegram polling/webhook
-                    let _ = token; // used in channel start
+                    let channel = Arc::new(koclaw_channels::telegram::TelegramChannel::new(
+                        token,
+                        tg.allowed_users.clone(),
+                    ));
+                    router.register_channel(channel.clone()).await;
+
+                    let channel_router = router.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = channel.start(channel_router).await {
+                            error!(error = %e, "Telegram channel stopped");
+                        }
+                    });
                 }
                 Err(e) => error!(error = %e, "Telegram channel config error"),
             }
@@ -62,15 +80,32 @@ async fn main() -> Result<()> {
 
     if let Some(ref qq) = config.channels.qq {
         if qq.enabled {
-            info!("Starting QQ channel");
-            // TODO: Start QQ bot
+            match (qq.resolve_app_id(), qq.resolve_secret()) {
+                (Ok(app_id), Ok(secret)) => {
+                    info!(sandbox = qq.sandbox, "Starting QQ channel");
+                    let channel = Arc::new(koclaw_channels::qq::QQChannel::new(
+                        app_id, secret, qq.sandbox,
+                    ));
+                    router.register_channel(channel.clone()).await;
+
+                    let channel_router = router.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = channel.start(channel_router).await {
+                            error!(error = %e, "QQ channel stopped");
+                        }
+                    });
+                }
+                (Err(e), _) | (_, Err(e)) => {
+                    error!(error = %e, "QQ channel config error");
+                }
+            }
         }
     }
 
     if let Some(ref dc) = config.channels.discord {
         if dc.enabled {
             info!("Starting Discord channel");
-            // TODO: Start Discord bot
+            // TODO: Implement Discord channel
         }
     }
 
