@@ -7,11 +7,9 @@ use anyhow::Result;
 use koclaw_common::channel::Channel;
 use tracing::{error, info};
 
-mod agent_bridge;
-mod config;
-mod router;
-
-use config::KoclawConfig;
+use koclaw_gateway::agent_bridge;
+use koclaw_gateway::config::KoclawConfig;
+use koclaw_gateway::router;
 
 #[tokio::main]
 async fn main() -> Result<()> {

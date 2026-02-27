@@ -3,6 +3,10 @@ name = "koclaw-gateway"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "koclaw_gateway"
+path = "src/lib.rs"
+
 [[bin]]
 name = "koclaw"
 path = "src/main.rs"
