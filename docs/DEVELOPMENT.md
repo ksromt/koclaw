@@ -48,8 +48,12 @@ This guide covers everything you need to build, test, and contribute to Koclaw. 
    # Install rustup (if not already installed)
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-   # Or on Windows:
-   winget install Rustlang.Rustup
+   # Or on Windows (WSL recommended for building):
+   # Install WSL with Ubuntu, then install Rust inside WSL:
+   wsl --install -d Ubuntu
+   # Inside WSL:
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   sudo apt install build-essential pkg-config libssl-dev
 
    # Set stable as default
    rustup default stable
@@ -57,6 +61,8 @@ This guide covers everything you need to build, test, and contribute to Koclaw. 
    # Add clippy and rustfmt
    rustup component add clippy rustfmt
    ```
+
+   **Windows Note:** Building on Windows requires VS Build Tools with MSVC and Windows SDK. If those are not installed, use WSL Ubuntu instead. Git for Windows' `link.exe` can shadow MSVC's linker and cause build failures.
 
 2. **Install Python toolchain:**
 
@@ -114,20 +120,20 @@ koclaw/
 |-- gateway/                # koclaw-gateway crate -- the main binary
 |   |-- Cargo.toml
 |   `-- src/
-|       |-- main.rs         # Entry point: logging, config, startup
-|       |-- router.rs       # MessageRouter implementation
-|       |-- config.rs       # Configuration loading (TOML + env vars) [planned]
-|       `-- agent_bridge.rs # WebSocket bridge to Python Agent [planned]
+|       |-- main.rs         # Entry point: logging, config, channel startup wiring
+|       |-- router.rs       # MessageRouter with permission enforcement + response routing
+|       |-- config.rs       # TOML configuration loading with env var secret resolution
+|       `-- agent_bridge.rs # WebSocket client with session-based response multiplexing
 |
 |-- channels/               # koclaw-channels crate -- channel implementations
 |   |-- Cargo.toml          # Feature flags per channel (telegram, qq, discord)
 |   `-- src/
 |       |-- lib.rs          # Conditional module exports
-|       |-- telegram.rs     # Telegram Bot API implementation
-|       |-- qq.rs           # QQ Bot API implementation [planned]
+|       |-- telegram.rs     # Telegram Bot API: polling, text/voice/image, allowed users
+|       |-- qq.rs           # QQ Bot API: OAuth2 tokens, WebSocket gateway, guild+DM
 |       `-- discord.rs      # Discord Bot API implementation [planned]
 |
-|-- agent/                  # Python Agent (FastAPI + LLM routing) [planned]
+|-- agent/                  # Python Agent (FastAPI + LLM routing)
 |   |-- pyproject.toml
 |   `-- koclaw_agent/
 |       |-- __init__.py
@@ -179,6 +185,18 @@ cargo build
 cargo build -p koclaw-gateway
 cargo build -p koclaw-common
 cargo build -p koclaw-channels
+```
+
+### Building via WSL (Windows)
+
+If you don't have VS Build Tools installed, use WSL Ubuntu:
+
+```bash
+# Build from Windows terminal using WSL
+wsl -d Ubuntu -- bash -c "source ~/.cargo/env && cd /mnt/d/personal_development/Koclaw && cargo build"
+
+# Run tests via WSL
+wsl -d Ubuntu -- bash -c "source ~/.cargo/env && cd /mnt/d/personal_development/Koclaw && cargo test"
 ```
 
 ### Release Build (Production)
@@ -354,7 +372,7 @@ Create `channels/src/my_new_channel.rs`:
 ```rust
 use std::sync::Arc;
 use anyhow::Result;
-use koclaw_common::channel::{Channel, ChannelType, MessageRouter};
+use koclaw_common::channel::{BoxFuture, Channel, ChannelType, MessageRouter};
 use koclaw_common::message::{IncomingMessage, OutgoingMessage};
 use koclaw_common::permission::PermissionLevel;
 
@@ -370,25 +388,32 @@ impl MyNewChannel {
 }
 
 impl Channel for MyNewChannel {
-    async fn start(&self, router: Arc<dyn MessageRouter>) -> Result<()> {
-        tracing::info!("MyNewChannel starting...");
+    fn start(&self, router: Arc<dyn MessageRouter>) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async move {
+            tracing::info!("MyNewChannel starting...");
 
-        // 1. Connect to the platform's API
-        // 2. Spawn a background task to listen for events
-        // 3. In the event handler:
-        //    a. Parse platform-specific message format
-        //    b. Convert to IncomingMessage
-        //    c. Call router.route(message).await
+            // 1. Connect to the platform's API
+            // 2. Spawn a background task to listen for events
+            // 3. In the event handler:
+            //    a. Parse platform-specific message format
+            //    b. Convert to IncomingMessage
+            //    c. Call router.route(message).await
 
-        Ok(())
+            Ok(())
+        })
     }
 
-    async fn send_message(&self, msg: &OutgoingMessage) -> Result<()> {
-        // 1. Convert OutgoingMessage to platform-specific format
-        // 2. Call the platform's send API
-        // 3. Handle errors (rate limits, invalid target, etc.)
+    fn send_message(&self, msg: &OutgoingMessage) -> BoxFuture<'_, Result<()>> {
+        // Clone fields from &msg BEFORE the async block to avoid lifetime issues
+        let target_id = msg.target_id.clone();
+        let text = msg.text.clone();
+        Box::pin(async move {
+            // 1. Convert OutgoingMessage to platform-specific format
+            // 2. Call the platform's send API
+            // 3. Handle errors (rate limits, invalid target, etc.)
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn channel_type(&self) -> ChannelType {
@@ -770,8 +795,11 @@ curl -X POST http://127.0.0.1:18789/api/v1/chat/public \
 | Issue                                     | Solution                                                |
 |-------------------------------------------|---------------------------------------------------------|
 | `cargo build` fails with edition error    | Ensure Rust 1.85+ is installed: `rustup update stable` |
+| `link.exe` error on Windows               | Git's `link.exe` shadows MSVC's linker. Use WSL Ubuntu to build instead |
+| rustc ICE in `check_mod_deathness`        | Known rustc 1.93.1 bug. Use `#![allow(dead_code)]` as workaround |
 | Agent bridge connection refused            | Start the Python Agent before the Gateway               |
 | Telegram bot not responding               | Verify `TELEGRAM_BOT_TOKEN` is set correctly            |
 | Permission denied errors                  | Check the channel's default permission level            |
 | Encryption test failures                  | Verify `chacha20poly1305` and `x25519-dalek` versions   |
 | Docker build fails on Windows             | Ensure Docker Desktop is running with WSL2 backend      |
+| `koclaw_channels::qq` not found           | Add `features = ["telegram", "qq"]` to gateway's Cargo.toml dependency |

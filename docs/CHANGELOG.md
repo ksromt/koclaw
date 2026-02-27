@@ -28,16 +28,43 @@ Phase 1: Gateway Core + Telegram & QQ Channels
   - `KoclawError` enum with structured error variants for channels, encryption, auth, permissions, agent, and configuration.
   - Placeholder module for E2E encryption primitives (X25519 + ChaCha20-Poly1305).
 
+- **Configuration System** (`koclaw-gateway`)
+  - TOML configuration file loading (`config.toml`) with `config.example.toml` template.
+  - Environment variable resolution for secrets (`token_env`, `secret_env` fields).
+  - Per-channel configuration with enable/disable toggles.
+  - Gateway settings: host, port, agent URL, log level.
+
 - **Gateway Binary** (`koclaw-gateway`)
   - Entry point with tokio async runtime and structured logging via `tracing`.
   - Environment-based log level configuration.
   - Graceful shutdown on Ctrl+C signal.
-  - `Router` struct implementing the `MessageRouter` trait (message routing skeleton).
+  - `Router` struct with full message pipeline: permission enforcement, agent forwarding, streaming response collection, and channel response delivery.
+  - `AgentBridge` WebSocket client with session-based response multiplexing (`HashMap<session_id, mpsc::Sender>`).
+  - Channel startup wiring: config-driven channel registration and background task spawning.
 
 - **Channel Implementations** (`koclaw-channels`)
   - Feature-flag-based channel compilation (telegram, qq, discord).
-  - `TelegramChannel` struct implementing the `Channel` trait (skeleton).
+  - `TelegramChannel`: Bot API polling mode with text, voice, and image message support. Allowed users filtering.
+  - `QQChannel`: Official Bot API with OAuth2 token management, WebSocket gateway connection (stub), guild and DM message support.
+  - Dyn-compatible `Channel` trait using `BoxFuture` pattern (required for trait object dispatch).
   - Conditional module exports based on enabled features.
+
+- **Encryption** (`koclaw-common`)
+  - ChaCha20-Poly1305 AEAD encryption for credentials at rest.
+  - Random key generation and nonce management.
+  - Config value encrypt/decrypt helpers.
+  - 5 unit tests for encryption round-trip, tampered ciphertext, wrong key, and empty plaintext.
+
+- **Python Agent Stub** (`agent/`)
+  - FastAPI WebSocket bridge server for Gateway communication.
+  - LLM router with provider selection (Claude, OpenAI, DeepSeek, Ollama).
+  - Streaming response chunks back to Gateway.
+  - Configuration via environment variables.
+
+- **Docker Deployment**
+  - Multi-stage Rust Dockerfile (build with `rust:latest`, run with `debian:bookworm-slim`).
+  - Python Agent Dockerfile with uv for dependency management.
+  - `docker-compose.yml` with gateway + agent services and internal networking.
 
 - **Documentation**
   - `CLAUDE.md` project guidelines with architecture, principles, and conventions.
@@ -53,18 +80,9 @@ Phase 1: Gateway Core + Telegram & QQ Channels
   - Core traits design document (`docs/architecture/trait-design.md`).
   - Development guide (`docs/DEVELOPMENT.md`).
 
-### Planned (In Progress for v0.1.0)
+### Remaining (In Progress for v0.1.0)
 
-- TOML configuration system with environment variable resolution.
-- Gateway-to-Agent WebSocket bridge for Python Agent communication.
-- Telegram channel: polling mode with text, voice, and image support.
-- QQ channel: Official Bot API with guild messages and direct messages.
-- Permission enforcement in the Router (Public vs Authenticated vs Admin).
-- Python Agent stub with LLM routing (Claude, OpenAI, DeepSeek).
-- ChaCha20-Poly1305 encryption for credentials at rest.
-- Encrypted session data storage in SQLite.
-- Docker Compose deployment (Gateway + Agent).
-- End-to-end integration tests.
+- End-to-end integration tests (Gateway + Agent + Channel round-trip).
 
 ---
 

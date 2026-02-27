@@ -42,11 +42,19 @@ The `Channel` trait defines the interface for all communication channels (Telegr
 
 **File:** `common/src/channel.rs`
 
+> **Note:** The traits use `BoxFuture` instead of `impl Future` return types. This is required for **dyn-compatibility** -- Rust cannot construct vtables for traits with `impl Trait` return types. The `BoxFuture` type alias (`Pin<Box<dyn Future<Output = T> + Send + 'a>>`) adds one heap allocation per call but enables trait objects (`Arc<dyn Channel>`) essential for the Gateway's channel registry.
+
 ```rust
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use anyhow::Result;
 use crate::message::{IncomingMessage, OutgoingMessage};
 use crate::permission::PermissionLevel;
+
+/// Type alias for dyn-compatible async trait methods.
+/// Required because `impl Future` in trait methods prevents trait object dispatch.
+pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Identifies which channel a message belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -66,45 +74,22 @@ pub enum ChannelType {
 /// 3. Register in the channel registry (config-driven)
 ///
 /// No existing code needs to be modified.
+///
+/// **Implementation note:** Methods return `BoxFuture` for dyn-compatibility.
+/// Use `Box::pin(async move { ... })` in implementations. When `send_message`
+/// takes `&OutgoingMessage`, clone needed fields before the async block to
+/// avoid lifetime conflicts.
 pub trait Channel: Send + Sync {
     /// Start listening for messages on this channel.
-    ///
-    /// This method is called once at startup. It should spawn background tasks
-    /// (e.g., a polling loop or webhook listener) that receive messages from
-    /// the external platform and forward them to the router.
-    ///
-    /// The `router` parameter is an `Arc<dyn MessageRouter>` that the channel
-    /// uses to forward received messages into the Gateway's routing pipeline.
-    ///
-    /// This method should return `Ok(())` once the background listener is
-    /// running. It should NOT block indefinitely.
-    fn start(
-        &self,
-        router: Arc<dyn MessageRouter>,
-    ) -> impl std::future::Future<Output = Result<()>> + Send;
+    fn start(&self, router: Arc<dyn MessageRouter>) -> BoxFuture<'_, Result<()>>;
 
     /// Send a message through this channel.
-    ///
-    /// The Gateway calls this method when it has a response to deliver.
-    /// The implementation is responsible for formatting the message
-    /// appropriately for its platform (e.g., Markdown for Telegram,
-    /// rich cards for QQ).
-    fn send_message(
-        &self,
-        msg: &OutgoingMessage,
-    ) -> impl std::future::Future<Output = Result<()>> + Send;
+    fn send_message(&self, msg: &OutgoingMessage) -> BoxFuture<'_, Result<()>>;
 
     /// The type of this channel.
-    ///
-    /// Used for routing responses back through the correct channel
-    /// and for logging/metrics.
     fn channel_type(&self) -> ChannelType;
 
     /// Default permission level for messages from this channel.
-    ///
-    /// This determines what capabilities are available to users
-    /// communicating through this channel. Individual users may
-    /// have overridden permission levels (e.g., admin users on Telegram).
     fn default_permission(&self) -> PermissionLevel;
 }
 ```
@@ -116,30 +101,35 @@ pub trait Channel: Send + Sync {
 
 use std::sync::Arc;
 use anyhow::Result;
-use koclaw_common::channel::{Channel, ChannelType, MessageRouter};
+use koclaw_common::channel::{BoxFuture, Channel, ChannelType, MessageRouter};
 use koclaw_common::message::OutgoingMessage;
 use koclaw_common::permission::PermissionLevel;
 
 pub struct TelegramChannel {
     token: String,
+    allowed_users: Option<Vec<i64>>,
 }
 
 impl TelegramChannel {
-    pub fn new(token: String) -> Self {
-        Self { token }
+    pub fn new(token: String, allowed_users: Option<Vec<i64>>) -> Self {
+        Self { token, allowed_users }
     }
 }
 
 impl Channel for TelegramChannel {
-    async fn start(&self, _router: Arc<dyn MessageRouter>) -> Result<()> {
-        // Start polling loop or webhook listener
-        tracing::info!("Telegram channel started");
-        Ok(())
+    fn start(&self, router: Arc<dyn MessageRouter>) -> BoxFuture<'_, Result<()>> {
+        Box::pin(self.start_polling(router))
     }
 
-    async fn send_message(&self, _msg: &OutgoingMessage) -> Result<()> {
-        // Call Telegram Bot API: POST /sendMessage
-        Ok(())
+    fn send_message(&self, msg: &OutgoingMessage) -> BoxFuture<'_, Result<()>> {
+        // Clone data from &msg before the async block to avoid lifetime issues
+        let target_id = msg.target_id.clone();
+        let text = msg.text.clone();
+        let reply_to = msg.reply_to.clone();
+        Box::pin(async move {
+            // Call Telegram Bot API: POST /sendMessage
+            self.send_text(&target_id, text.as_deref().unwrap_or(""), reply_to.as_deref()).await
+        })
     }
 
     fn channel_type(&self) -> ChannelType {
@@ -197,22 +187,9 @@ The `MessageRouter` trait defines the interface for the central message routing 
 
 ```rust
 /// Trait for message routing -- receives incoming messages from channels.
+/// Uses BoxFuture for dyn-compatibility (same pattern as Channel trait).
 pub trait MessageRouter: Send + Sync {
-    /// Route an incoming message through the pipeline.
-    ///
-    /// This method:
-    /// 1. Checks the message's permission level
-    /// 2. Applies rate limiting
-    /// 3. Forwards to the Agent via the bridge
-    /// 4. Collects the Agent's response
-    /// 5. Sends the response back through the originating channel
-    ///
-    /// Returns Ok(()) on success. Errors are logged and, where possible,
-    /// communicated back to the user as error messages.
-    fn route(
-        &self,
-        message: IncomingMessage,
-    ) -> impl std::future::Future<Output = Result<()>> + Send;
+    fn route(&self, message: IncomingMessage) -> BoxFuture<'_, Result<()>>;
 }
 ```
 
@@ -220,37 +197,46 @@ pub trait MessageRouter: Send + Sync {
 
 **File:** `gateway/src/router.rs`
 
-```rust
-use anyhow::Result;
-use koclaw_common::message::IncomingMessage;
-use koclaw_common::channel::MessageRouter;
+The Router is the central message hub. It holds references to the AgentBridge (for forwarding to the Python Agent) and a registry of active channels (for sending responses back).
 
-/// Routes incoming messages from channels to the agent and back.
+```rust
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use anyhow::Result;
+use koclaw_common::channel::{BoxFuture, Channel, ChannelType, MessageRouter};
+use koclaw_common::message::{IncomingMessage, OutgoingMessage};
+use crate::agent_bridge::AgentBridge;
+
 pub struct Router {
-    // agent_bridge: AgentBridge,
-    // channel_registry: ChannelRegistry,
+    bridge: Arc<AgentBridge>,
+    channels: RwLock<HashMap<ChannelType, Arc<dyn Channel>>>,
 }
 
 impl Router {
-    pub fn new() -> Self {
-        Self {}
+    pub fn new(bridge: Arc<AgentBridge>) -> Self {
+        Self {
+            bridge,
+            channels: RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub async fn register_channel(&self, channel: Arc<dyn Channel>) {
+        let channel_type = channel.channel_type();
+        self.channels.write().await.insert(channel_type, channel);
     }
 }
 
 impl MessageRouter for Router {
-    async fn route(&self, message: IncomingMessage) -> Result<()> {
-        tracing::info!(
-            channel = %message.channel,
-            user = %message.user_id,
-            "Routing message"
-        );
-
-        // 1. Check permissions
-        // 2. Apply rate limiting
-        // 3. Forward to agent
-        // 4. Return response through channel
-
-        Ok(())
+    fn route(&self, message: IncomingMessage) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async move {
+            // 1. Permission enforcement (deny tool execution for Public)
+            // 2. Check agent connectivity
+            // 3. Forward to Agent via bridge.chat()
+            // 4. Collect streaming response chunks
+            // 5. Send full response back through originating channel
+            Ok(())
+        })
     }
 }
 ```

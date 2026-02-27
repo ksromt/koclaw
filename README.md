@@ -419,16 +419,16 @@ For the full development guide, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 ### Phase 1 -- Gateway Core + Channels (Current)
 
 - [x] Rust workspace with common, gateway, and channels crates
-- [x] Core trait definitions (Channel, MessageRouter, PermissionLevel)
+- [x] Core trait definitions (Channel, MessageRouter, PermissionLevel) with dyn-compatible BoxFuture pattern
 - [x] IncomingMessage / OutgoingMessage data model
-- [x] Telegram channel implementation (polling mode)
-- [ ] Configuration system (TOML + env vars)
-- [ ] Gateway-to-Agent WebSocket bridge
-- [ ] QQ channel implementation
-- [ ] Permission enforcement in Router
-- [ ] Python Agent stub with LLM routing
-- [ ] Basic encryption at rest (ChaCha20-Poly1305)
-- [ ] Docker Compose deployment
+- [x] Configuration system (TOML + env vars with secret resolution)
+- [x] Gateway-to-Agent WebSocket bridge (session-based response multiplexing)
+- [x] Telegram channel implementation (polling mode with text/voice/image)
+- [x] QQ channel implementation (WebSocket gateway + REST API)
+- [x] Permission enforcement in Router (Public/Authenticated/Admin)
+- [x] Python Agent stub with LLM routing (Claude, OpenAI, DeepSeek, Ollama)
+- [x] Basic encryption at rest (ChaCha20-Poly1305 for credentials and session data)
+- [x] Docker Compose deployment (Gateway + Agent)
 - [ ] End-to-end integration tests
 
 ### Phase 2 -- Security, Voice, and Memory
