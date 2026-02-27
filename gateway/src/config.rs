@@ -106,6 +106,13 @@ pub struct DiscordConfig {
     pub token_env: Option<String>,
 }
 
+impl DiscordConfig {
+    pub fn resolve_token(&self) -> Result<String> {
+        resolve_secret(&self.token, &self.token_env)
+            .context("Discord bot token not configured. Set DISCORD_BOT_TOKEN or token in config")
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct ProvidersConfig {
     #[serde(default = "default_provider")]

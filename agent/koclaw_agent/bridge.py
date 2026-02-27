@@ -61,6 +61,7 @@ class AgentBridge:
         session_id = message.get("session_id", "")
         text = message.get("text", "")
         permission = message.get("permission", "Public")
+        system_prompt = message.get("system_prompt")
 
         logger.info(
             f"Chat request: session={session_id}, "
@@ -74,6 +75,7 @@ class AgentBridge:
             session_id=session_id,
             permission=permission,
             attachments=message.get("attachments", []),
+            system_prompt=system_prompt,
         ):
             await websocket.send(json.dumps({
                 "type": "text_chunk",

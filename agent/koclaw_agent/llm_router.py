@@ -52,13 +52,16 @@ class LLMRouter:
         permission: str = "Authenticated",
         attachments: list = None,
         provider: str = None,
+        system_prompt: str = None,
     ) -> AsyncGenerator[str, None]:
         """Generate a response from the LLM, yielding text chunks."""
         provider_name = provider or self.default_provider
 
         if provider_name in self._providers:
             provider_instance = self._providers[provider_name]
-            async for chunk in provider_instance.generate(text, session_id, attachments or []):
+            async for chunk in provider_instance.generate(
+                text, session_id, attachments or [], system_prompt=system_prompt
+            ):
                 yield chunk
         else:
             # Echo mode — useful for testing without API keys

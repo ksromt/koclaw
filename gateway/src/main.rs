@@ -102,8 +102,22 @@ async fn main() -> Result<()> {
 
     if let Some(ref dc) = config.channels.discord {
         if dc.enabled {
-            info!("Starting Discord channel");
-            // TODO: Implement Discord channel
+            match dc.resolve_token() {
+                Ok(token) => {
+                    info!("Starting Discord channel");
+                    let channel =
+                        Arc::new(koclaw_channels::discord::DiscordChannel::new(token));
+                    router.register_channel(channel.clone()).await;
+
+                    let channel_router = router.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = channel.start(channel_router).await {
+                            error!(error = %e, "Discord channel stopped");
+                        }
+                    });
+                }
+                Err(e) => error!(error = %e, "Discord channel config error"),
+            }
         }
     }
 

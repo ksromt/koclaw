@@ -12,7 +12,7 @@ from loguru import logger
 from .base import BaseProvider
 
 DEFAULT_MODEL = "gpt-4o"
-SYSTEM_PROMPT = (
+DEFAULT_SYSTEM_PROMPT = (
     "You are Kokoron, a helpful and friendly AI assistant. "
     "Respond naturally and concisely. You can communicate in "
     "English, Japanese, and Chinese."
@@ -35,14 +35,12 @@ class OpenAIProvider(BaseProvider):
         text: str,
         session_id: str,
         attachments: list,
+        system_prompt: str | None = None,
     ) -> AsyncGenerator[str, None]:
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
             {"role": "user", "content": text},
         ]
-
-        # TODO: Add conversation history
-        # TODO: Add image attachments for vision models
 
         stream = await self.client.chat.completions.create(
             model=self.model,

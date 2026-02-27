@@ -270,7 +270,7 @@ KOCLAW_SANDBOX_ROOT=./workspace  # Agent sandbox root directory
 |-------------|-------------------------|----------------|------------------|--------------------------------------------|
 | Telegram    | Bot API (polling/webhook)| In Progress    | Authenticated   | Text, voice, images, files, inline keyboards |
 | QQ          | Official Bot API (WS+REST)| In Progress  | Authenticated   | Guild messages, DMs, rich cards             |
-| Discord     | Bot API (gateway WS)   | Planned        | Authenticated   | Text, voice channels, slash commands        |
+| Discord     | Bot API (gateway WS)   | In Progress    | Authenticated   | Text, voice channels, slash commands        |
 | WebSocket   | Raw WebSocket           | Planned        | Authenticated   | Desktop companion connection                |
 | Web Public  | REST + SSE              | Planned        | Public           | Blog widget chat (shinBlog integration)     |
 
@@ -431,14 +431,15 @@ For the full development guide, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 - [x] Docker Compose deployment (Gateway + Agent)
 - [ ] End-to-end integration tests
 
-### Phase 2 -- Security, Voice, and Memory
+### Phase 2 -- Security, Discord, Memory & Persona (Current)
 
-- [ ] X25519 key exchange for transport encryption
-- [ ] Discord channel implementation
+- [x] X25519 key exchange with HKDF-SHA256 session key derivation (4 tests)
+- [x] Discord channel implementation (WebSocket Gateway + REST API)
+- [x] Encrypted memory system with SQLite + ChaCha20-Poly1305 (7 tests)
+- [x] Persona system with per-channel identity management (4 tests)
+- [x] Tool sandbox with path validation and command allowlist (6 tests)
+- [x] Persona + Sandbox wired into Agent Bridge protocol
 - [ ] Voice pipeline integration (ASR/TTS from AIKokoron)
-- [ ] Encrypted memory system with persistence
-- [ ] Tool sandbox implementation (filesystem scope, command allowlist)
-- [ ] Persona system (Kokoron identity, per-channel behavior)
 - [ ] True zero-knowledge E2E encryption (Agent-held keys)
 
 ### Phase 3 -- Web SDK, Desktop, and Advanced Features

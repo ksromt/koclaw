@@ -7,8 +7,9 @@ use tracing::{debug, error, info, warn};
 
 use koclaw_common::channel::{BoxFuture, Channel, ChannelType, MessageRouter};
 use koclaw_common::message::{IncomingMessage, OutgoingMessage};
+use koclaw_common::persona::Persona;
 
-use crate::agent_bridge::AgentBridge;
+use crate::agent_bridge::{AgentBridge, ChatContext};
 
 /// Routes incoming messages from channels to the agent and back.
 ///
@@ -21,6 +22,7 @@ use crate::agent_bridge::AgentBridge;
 pub struct Router {
     bridge: Arc<AgentBridge>,
     channels: RwLock<HashMap<ChannelType, Arc<dyn Channel>>>,
+    persona: Persona,
 }
 
 impl Router {
@@ -28,6 +30,7 @@ impl Router {
         Self {
             bridge,
             channels: RwLock::new(HashMap::new()),
+            persona: Persona::kokoron(),
         }
     }
 
@@ -116,7 +119,12 @@ impl MessageRouter for Router {
                 return Ok(());
             }
 
-            let mut rx = match self.bridge.chat(&message).await {
+            let context = ChatContext {
+                system_prompt: Some(self.persona.system_prompt(message.channel)),
+                ..Default::default()
+            };
+
+            let mut rx = match self.bridge.chat(&message, context).await {
                 Ok(rx) => rx,
                 Err(e) => {
                     error!(error = %e, "Failed to send to Agent");

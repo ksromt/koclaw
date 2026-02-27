@@ -21,6 +21,20 @@ pub struct AgentRequest {
     pub permission: String,
     pub text: Option<String>,
     pub attachments: Vec<AttachmentPayload>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sandbox_root: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub allowed_commands: Vec<String>,
+}
+
+/// Additional context for a chat request (persona, sandbox, etc.)
+#[derive(Debug, Default)]
+pub struct ChatContext {
+    pub system_prompt: Option<String>,
+    pub sandbox_root: Option<String>,
+    pub allowed_commands: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -159,6 +173,7 @@ impl AgentBridge {
     pub async fn chat(
         &self,
         message: &IncomingMessage,
+        context: ChatContext,
     ) -> Result<mpsc::Receiver<AgentResponseChunk>> {
         let request = AgentRequest {
             msg_type: "chat".to_string(),
@@ -176,6 +191,9 @@ impl AgentBridge {
                     mime_type: a.mime_type.clone(),
                 })
                 .collect(),
+            system_prompt: context.system_prompt,
+            sandbox_root: context.sandbox_root,
+            allowed_commands: context.allowed_commands,
         };
 
         let json = serde_json::to_string(&request)?;

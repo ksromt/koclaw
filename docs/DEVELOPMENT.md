@@ -115,7 +115,10 @@ koclaw/
 |       |-- message.rs      # IncomingMessage, OutgoingMessage, Attachment types
 |       |-- permission.rs   # PermissionLevel enum with capability checks
 |       |-- error.rs        # KoclawError enum (thiserror-based)
-|       `-- crypto.rs       # Encryption primitives (X25519, ChaCha20-Poly1305)
+|       |-- crypto.rs       # Encryption: ChaCha20-Poly1305 + X25519 key exchange + HKDF
+|       |-- memory.rs       # Encrypted memory store (SQLite + ChaCha20)
+|       |-- persona.rs      # Persona system with per-channel identity
+|       `-- sandbox.rs      # Tool sandbox: path validation + command allowlist
 |
 |-- gateway/                # koclaw-gateway crate -- the main binary
 |   |-- Cargo.toml
@@ -131,15 +134,16 @@ koclaw/
 |       |-- lib.rs          # Conditional module exports
 |       |-- telegram.rs     # Telegram Bot API: polling, text/voice/image, allowed users
 |       |-- qq.rs           # QQ Bot API: OAuth2 tokens, WebSocket gateway, guild+DM
-|       `-- discord.rs      # Discord Bot API implementation [planned]
+|       `-- discord.rs      # Discord Bot API: WebSocket Gateway + REST messaging
 |
 |-- agent/                  # Python Agent (FastAPI + LLM routing)
 |   |-- pyproject.toml
 |   `-- koclaw_agent/
 |       |-- __init__.py
-|       |-- bridge.py       # WebSocket bridge server
+|       |-- bridge.py       # WebSocket bridge server (passes system_prompt to LLM)
 |       |-- llm_router.py   # LLM provider selection and routing
-|       `-- providers/      # Per-provider implementations
+|       |-- persona.py      # Python Persona dataclass (mirrors Rust types)
+|       `-- providers/      # Per-provider implementations (with system_prompt support)
 |
 |-- sdk/                    # @koclaw/web-widget (TypeScript) [planned - Phase 3]
 |-- desktop/                # Electron + React desktop app [planned - Phase 3]

@@ -12,7 +12,7 @@ from loguru import logger
 from .base import BaseProvider
 
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
-SYSTEM_PROMPT = (
+DEFAULT_SYSTEM_PROMPT = (
     "You are Kokoron, a helpful and friendly AI assistant. "
     "Respond naturally and concisely. You can communicate in "
     "English, Japanese, and Chinese."
@@ -34,17 +34,14 @@ class AnthropicProvider(BaseProvider):
         text: str,
         session_id: str,
         attachments: list,
+        system_prompt: str | None = None,
     ) -> AsyncGenerator[str, None]:
-        # Build messages
         messages = [{"role": "user", "content": text}]
-
-        # TODO: Add attachment handling for multimodal (images)
-        # TODO: Add conversation history from memory system
 
         async with self.client.messages.stream(
             model=self.model,
             max_tokens=4096,
-            system=SYSTEM_PROMPT,
+            system=system_prompt or DEFAULT_SYSTEM_PROMPT,
             messages=messages,
         ) as stream:
             async for chunk in stream.text_stream:

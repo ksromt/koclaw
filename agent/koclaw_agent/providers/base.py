@@ -19,6 +19,7 @@ class BaseProvider(ABC):
         text: str,
         session_id: str,
         attachments: list,
+        system_prompt: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Generate a streaming response. Yield text chunks."""
         ...

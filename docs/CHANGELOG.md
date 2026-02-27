@@ -86,19 +86,59 @@ Phase 1: Gateway Core + Telegram & QQ Channels
 
 ---
 
+## [0.2.0] - Unreleased
+
+Phase 2: Security, Discord, Memory & Persona
+
+### Added
+
+- **X25519 Key Exchange** (`koclaw-common`)
+  - `generate_keypair()` for X25519 keypair generation.
+  - `derive_shared_secret()` for Diffie-Hellman shared secret.
+  - `derive_session_key()` with HKDF-SHA256 and domain-separated context strings.
+  - 4 unit tests: key exchange, session derivation, session encrypt/decrypt, context separation.
+
+- **Discord Channel** (`koclaw-channels`)
+  - `DiscordChannel` implementing the `Channel` trait via WebSocket Gateway.
+  - Full Gateway lifecycle: HELLO, IDENTIFY, heartbeat, MESSAGE_CREATE event handling.
+  - REST API message sending with reply support.
+  - Intents: GUILD_MESSAGES, MESSAGE_CONTENT, DIRECT_MESSAGES.
+  - `DiscordConfig::resolve_token()` for config-driven token resolution.
+  - Wired into `main.rs` channel startup.
+
+- **Encrypted Memory System** (`koclaw-common`)
+  - `MemoryStore` backed by SQLite with ChaCha20-Poly1305 encrypted values.
+  - Operations: store, retrieve, delete, list_keys (prefix), count.
+  - In-memory constructor for testing.
+  - 7 unit tests: store/retrieve, missing key, overwrite, delete, prefix list, wrong key, count.
+
+- **Persona System** (`koclaw-common` + `agent/`)
+  - `Persona` struct with base prompt, per-channel overrides, and display name.
+  - `system_prompt(channel)` returns channel-appropriate prompt.
+  - Default `Persona::kokoron()` with WebPublic blog assistant override.
+  - Python `Persona` dataclass mirroring Rust types.
+  - 4 unit tests: default prompt, channel override, default name, name override.
+
+- **Tool Sandbox** (`koclaw-common`)
+  - `SandboxConfig` with path validation and command allowlist.
+  - `validate_path()` prevents directory traversal attacks.
+  - `validate_command()` checks against explicit allowlist.
+  - 6 unit tests: valid path, escape blocked, dotdot escape, valid/blocked commands, default empty.
+
+- **Agent Bridge Protocol Extension** (`koclaw-gateway` + `agent/`)
+  - `ChatContext` struct carrying system_prompt and sandbox config.
+  - `AgentRequest` extended with `system_prompt`, `sandbox_root`, `allowed_commands` fields.
+  - Router injects persona system prompt per channel into agent requests.
+  - Python bridge passes system_prompt through to LLM providers.
+  - Both Anthropic and OpenAI providers accept dynamic system_prompt.
+
+---
+
 ## Future Releases
 
-### [0.2.0] - Planned
+### [0.3.0] - Planned
 
-Phase 2: Security, Voice, and Memory
-
-- X25519 key exchange for transport encryption.
-- Discord channel implementation.
-- Voice pipeline integration (ASR/TTS from AIKokoron).
-- Encrypted memory system with persistence.
-- Tool sandbox implementation (filesystem scope, command allowlist).
-- Persona system (Kokoron identity across channels).
-- True zero-knowledge E2E encryption (Agent-held keys).
+Phase 3: Web SDK, Desktop, and Advanced Features
 
 ### [0.3.0] - Planned
 
