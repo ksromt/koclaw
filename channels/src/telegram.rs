@@ -5,8 +5,9 @@
 //!
 //! Telegram Bot API reference: https://core.telegram.org/bots/api
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -17,12 +18,16 @@ use koclaw_common::message::{Attachment, AttachmentType, IncomingMessage, Outgoi
 use koclaw_common::permission::PermissionLevel;
 
 const TELEGRAM_API_BASE: &str = "https://api.telegram.org/bot";
+const REJECT_COOLDOWN: Duration = Duration::from_secs(30 * 60); // 30 minutes
+const REJECT_MESSAGE: &str = "Sorry, this bot is currently in private mode and not accepting conversations from new users. 🔒";
 
 /// Telegram channel implementation using Bot API.
 pub struct TelegramChannel {
     token: String,
     client: reqwest::Client,
     allowed_users: Vec<i64>,
+    /// Tracks last rejection reply time per user to avoid spamming.
+    rejected_users: Mutex<HashMap<i64, Instant>>,
 }
 
 impl TelegramChannel {
@@ -36,6 +41,7 @@ impl TelegramChannel {
             token,
             client,
             allowed_users,
+            rejected_users: Mutex::new(HashMap::new()),
         }
     }
 
@@ -108,9 +114,25 @@ impl TelegramChannel {
     ) -> Result<()> {
         let user_id = msg.from.as_ref().map(|u| u.id).unwrap_or(0);
 
-        // Check allowed users
+        // Check allowed users — reply once then cooldown for 30 minutes
         if !self.allowed_users.is_empty() && !self.allowed_users.contains(&user_id) {
-            debug!(user_id, "Telegram user not in allowed list, ignoring");
+            let should_reply = {
+                let mut rejected = self.rejected_users.lock().unwrap();
+                match rejected.get(&user_id) {
+                    Some(last_time) if last_time.elapsed() < REJECT_COOLDOWN => false,
+                    _ => {
+                        rejected.insert(user_id, Instant::now());
+                        true
+                    }
+                }
+            };
+
+            if should_reply {
+                info!(user_id, "Unauthorized user, sending rejection message");
+                self.send_text(&msg.chat.id.to_string(), REJECT_MESSAGE).await.ok();
+            } else {
+                debug!(user_id, "Unauthorized user in cooldown, ignoring");
+            }
             return Ok(());
         }
 
@@ -179,6 +201,33 @@ impl TelegramChannel {
         };
 
         router.route(incoming).await
+    }
+
+    /// Send a plain text message directly (no LLM involved).
+    async fn send_text(&self, chat_id: &str, text: &str) -> Result<()> {
+        let url = self.api_url("sendMessage");
+        let params = serde_json::json!({
+            "chat_id": chat_id,
+            "text": text,
+        });
+
+        let resp: TgApiResponse<TgMessage> = self
+            .client
+            .post(&url)
+            .json(&params)
+            .send()
+            .await
+            .context("Failed to send rejection message")?
+            .json()
+            .await?;
+
+        if !resp.ok {
+            error!(
+                error = resp.description.unwrap_or_default(),
+                "Failed to send rejection message"
+            );
+        }
+        Ok(())
     }
 
     /// Get a download URL for a Telegram file.

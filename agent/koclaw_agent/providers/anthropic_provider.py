@@ -35,8 +35,15 @@ class AnthropicProvider(BaseProvider):
         session_id: str,
         attachments: list,
         system_prompt: str | None = None,
+        history: list[dict] | None = None,
     ) -> AsyncGenerator[str, None]:
-        messages = [{"role": "user", "content": text}]
+        messages = []
+
+        if history:
+            for msg in history:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+
+        messages.append({"role": "user", "content": text})
 
         async with self.client.messages.stream(
             model=self.model,

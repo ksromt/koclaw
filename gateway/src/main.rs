@@ -49,8 +49,24 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Create router with agent bridge
-    let router = Arc::new(router::Router::new(bridge));
+    // Load persona from YAML (falls back to hardcoded default)
+    let persona = {
+        let persona_path = std::path::Path::new("persona.yaml");
+        if persona_path.exists() {
+            let yaml =
+                std::fs::read_to_string(persona_path).expect("Failed to read persona.yaml");
+            let p = koclaw_common::persona::Persona::from_yaml(&yaml)
+                .expect("Failed to parse persona.yaml");
+            info!(name = %p.name, "Loaded persona from persona.yaml");
+            p
+        } else {
+            info!("No persona.yaml found, using default Kokoron persona");
+            koclaw_common::persona::Persona::kokoron()
+        }
+    };
+
+    // Create router with agent bridge and persona
+    let router = Arc::new(router::Router::with_persona(bridge, persona));
 
     // Start enabled channels
     if let Some(ref tg) = config.channels.telegram {
@@ -118,6 +134,42 @@ async fn main() -> Result<()> {
                 }
                 Err(e) => error!(error = %e, "Discord channel config error"),
             }
+        }
+    }
+
+    if let Some(ref ws) = config.channels.websocket {
+        if ws.enabled {
+            info!(host = %ws.host, port = %ws.port, "Starting WebSocket channel");
+            let channel = Arc::new(
+                koclaw_channels::websocket_channel::WebSocketChannel::new(
+                    ws.host.clone(),
+                    ws.port,
+                ),
+            );
+            router.register_channel(channel.clone()).await;
+
+            let channel_router = router.clone();
+            tokio::spawn(async move {
+                if let Err(e) = channel.start(channel_router).await {
+                    error!(error = %e, "WebSocket channel stopped");
+                }
+            });
+        }
+    }
+
+    // Start static file server for Live2D models and assets
+    if let Some(ref sf) = config.gateway.static_files {
+        if sf.enabled {
+            let root = std::path::PathBuf::from(&sf.root);
+            let host = sf.host.clone();
+            let port = sf.port;
+            tokio::spawn(async move {
+                if let Err(e) =
+                    koclaw_gateway::static_server::start_static_server(&host, port, root).await
+                {
+                    error!(error = %e, "Static file server stopped");
+                }
+            });
         }
     }
 

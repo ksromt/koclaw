@@ -24,6 +24,19 @@ pub struct GatewayConfig {
     pub log_level: String,
     #[serde(default)]
     pub sandbox: SandboxConfig,
+    pub static_files: Option<StaticFilesConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StaticFilesConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_static_host")]
+    pub host: String,
+    #[serde(default = "default_static_port")]
+    pub port: u16,
+    #[serde(default = "default_static_root")]
+    pub root: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,6 +64,7 @@ pub struct ChannelsConfig {
     pub telegram: Option<TelegramConfig>,
     pub qq: Option<QQConfig>,
     pub discord: Option<DiscordConfig>,
+    pub websocket: Option<WebSocketConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +125,16 @@ impl DiscordConfig {
         resolve_secret(&self.token, &self.token_env)
             .context("Discord bot token not configured. Set DISCORD_BOT_TOKEN or token in config")
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebSocketConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_ws_host")]
+    pub host: String,
+    #[serde(default = "default_ws_port")]
+    pub port: u16,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -191,4 +215,9 @@ fn default_workspace_root() -> String { "./workspace".to_string() }
 fn default_max_file_size() -> u64 { 10_485_760 } // 10MB
 fn default_polling_mode() -> String { "polling".to_string() }
 fn default_true() -> bool { true }
+fn default_ws_host() -> String { "127.0.0.1".to_string() }
+fn default_ws_port() -> u16 { 18791 }
+fn default_static_host() -> String { "127.0.0.1".to_string() }
+fn default_static_port() -> u16 { 18792 }
+fn default_static_root() -> String { "./assets".to_string() }
 fn default_provider() -> String { "anthropic".to_string() }

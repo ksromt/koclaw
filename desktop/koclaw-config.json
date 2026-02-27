@@ -1,0 +1,12 @@
+{
+  "$schema": "Koclaw Desktop Connection Config",
+  "description": "Configuration for connecting AIKokoron frontend to Koclaw Gateway",
+  "websocket_url": "ws://127.0.0.1:18791",
+  "static_assets_url": "http://127.0.0.1:18792",
+  "persona_name": "Kokoron",
+  "notes": {
+    "websocket_url": "WebSocket channel on the Koclaw Gateway (matches config.toml [channels.websocket])",
+    "static_assets_url": "HTTP server for Live2D models and voice assets (matches config.toml [gateway.static_files])",
+    "remote_access": "For remote servers, use SSH tunneling: ssh -L 18791:127.0.0.1:18791 -L 18792:127.0.0.1:18792 user@server"
+  }
+}

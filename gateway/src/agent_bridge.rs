@@ -51,6 +51,15 @@ pub struct AgentResponseChunk {
     pub msg_type: String,
     pub session_id: Option<String>,
     pub content: Option<String>,
+    /// Base64-encoded audio data (WAV) — sent with "audio" type chunks
+    #[serde(default)]
+    pub data: Option<String>,
+    /// Audio format (e.g. "wav") — sent with "audio" type chunks
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Expression tags extracted from response — sent with "done" chunks
+    #[serde(default)]
+    pub expressions: Option<Vec<String>>,
 }
 
 /// Pending response senders keyed by session_id.

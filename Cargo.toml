@@ -19,6 +19,7 @@ tokio = { version = "1", features = ["full"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 toml = "0.8"
 
 # HTTP
@@ -44,6 +45,10 @@ thiserror = "2"
 
 # Config
 config = "0.14"
+
+# HTTP server (for static file serving)
+axum = "0.8"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
 
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }

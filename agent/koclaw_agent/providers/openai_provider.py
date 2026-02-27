@@ -36,11 +36,17 @@ class OpenAIProvider(BaseProvider):
         session_id: str,
         attachments: list,
         system_prompt: str | None = None,
+        history: list[dict] | None = None,
     ) -> AsyncGenerator[str, None]:
         messages = [
             {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
-            {"role": "user", "content": text},
         ]
+
+        if history:
+            for msg in history:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+
+        messages.append({"role": "user", "content": text})
 
         stream = await self.client.chat.completions.create(
             model=self.model,

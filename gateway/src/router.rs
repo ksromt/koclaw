@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use koclaw_common::channel::{BoxFuture, Channel, ChannelType, MessageRouter};
-use koclaw_common::message::{IncomingMessage, OutgoingMessage};
+use koclaw_common::message::{Attachment, AttachmentType, IncomingMessage, OutgoingMessage};
 use koclaw_common::persona::Persona;
 
 use crate::agent_bridge::{AgentBridge, ChatContext};
@@ -27,10 +27,14 @@ pub struct Router {
 
 impl Router {
     pub fn new(bridge: Arc<AgentBridge>) -> Self {
+        Self::with_persona(bridge, Persona::kokoron())
+    }
+
+    pub fn with_persona(bridge: Arc<AgentBridge>, persona: Persona) -> Self {
         Self {
             bridge,
             channels: RwLock::new(HashMap::new()),
-            persona: Persona::kokoron(),
+            persona,
         }
     }
 
@@ -132,8 +136,12 @@ impl MessageRouter for Router {
                 }
             };
 
-            // Step 3: Collect streaming response
+            // Step 3: Collect streaming response + metadata
             let mut full_response = String::new();
+            let mut expressions: Vec<String> = Vec::new();
+            let mut audio_data: Option<String> = None;
+            let mut audio_format: Option<String> = None;
+
             while let Some(chunk) = rx.recv().await {
                 match chunk.msg_type.as_str() {
                     "text_chunk" => {
@@ -141,8 +149,19 @@ impl MessageRouter for Router {
                             full_response.push_str(content);
                         }
                     }
+                    "audio" => {
+                        audio_data = chunk.data;
+                        audio_format = chunk.format;
+                    }
                     "done" => {
-                        debug!(session = %message.session_id, "Agent response complete");
+                        if let Some(exprs) = chunk.expressions {
+                            expressions = exprs;
+                        }
+                        debug!(
+                            session = %message.session_id,
+                            expressions = ?expressions,
+                            "Agent response complete"
+                        );
                         break;
                     }
                     "error" => {
@@ -159,20 +178,41 @@ impl MessageRouter for Router {
 
             // Step 4: Send response back through originating channel
             if !full_response.is_empty() {
-                // Extract the chat/channel ID from session_id (e.g., "tg:12345" → "12345")
                 let target_id = message
                     .session_id
                     .split_once(':')
                     .map(|(_, id)| id)
                     .unwrap_or(&message.session_id);
 
-                self.send_response(
-                    message.channel,
-                    target_id,
-                    &full_response,
-                    Some(&message.id),
-                )
-                .await?;
+                // For WebSocket clients, include audio attachment if available
+                let mut attachments = Vec::new();
+                if message.channel == ChannelType::WebSocket {
+                    if let Some(audio) = audio_data {
+                        attachments.push(Attachment {
+                            attachment_type: AttachmentType::Voice,
+                            url: audio,
+                            mime_type: Some(
+                                audio_format.unwrap_or_else(|| "audio/wav".to_string()),
+                            ),
+                            file_name: None,
+                            size: None,
+                        });
+                    }
+                }
+
+                let channels = self.channels.read().await;
+                if let Some(channel) = channels.get(&message.channel) {
+                    let msg = OutgoingMessage {
+                        channel: message.channel,
+                        target_id: target_id.to_string(),
+                        text: Some(full_response),
+                        attachments,
+                        reply_to: Some(message.id.clone()),
+                    };
+                    channel.send_message(&msg).await?;
+                } else {
+                    warn!(%message.channel, "No channel registered for response delivery");
+                }
             }
 
             Ok(())

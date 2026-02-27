@@ -20,6 +20,7 @@ class BaseProvider(ABC):
         session_id: str,
         attachments: list,
         system_prompt: str | None = None,
+        history: list[dict] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Generate a streaming response. Yield text chunks."""
         ...

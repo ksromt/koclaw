@@ -8,6 +8,7 @@ default = ["telegram"]
 telegram = ["dep:reqwest"]
 qq = ["dep:reqwest"]
 discord = ["dep:reqwest", "dep:tokio-tungstenite", "dep:futures-util"]
+websocket = ["dep:tokio-tungstenite", "dep:futures-util"]
 
 [dependencies]
 koclaw-common = { workspace = true }
