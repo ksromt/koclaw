@@ -22,6 +22,7 @@ from .mcp_host.tool_permissions import ToolPermissionChecker
 from .mcp_host.tool_prompt import build_tool_prompt, parse_tool_call
 from .memory import FileMemory
 from .persona import Persona
+from .scheduler_tools import SCHEDULER_TOOLS, is_scheduler_tool
 
 
 # Common UTC offset → IANA timezone mapping (covers most users)
@@ -79,6 +80,9 @@ class AgentBridge:
         mcp_configs = mcp_configs or {}
         if mcp_configs.get("servers"):
             self.mcp_manager.load_configs(mcp_configs["servers"])
+
+        # Pending scheduler request futures (session_id -> asyncio.Future)
+        self._scheduler_pending: dict[str, asyncio.Future] = {}
 
         # Tool permission enforcement
         perm_mode = mcp_configs.get("permission_mode", "blocklist")
@@ -149,14 +153,20 @@ class AgentBridge:
 
         try:
             async for raw_message in websocket:
+                session_id = ""
                 try:
                     message = json.loads(raw_message)
+                    session_id = message.get("session_id", "")
                     msg_type = message.get("type", "")
 
                     if msg_type == "chat":
                         await self._handle_chat(websocket, message)
                     elif msg_type == "audio_input":
                         await self._handle_audio_input(websocket, message)
+                    elif msg_type == "scheduler_trigger":
+                        await self._handle_scheduler_trigger(websocket, message)
+                    elif msg_type == "scheduler_response":
+                        self._handle_scheduler_response(message)
                     elif msg_type == "ping":
                         await websocket.send(json.dumps({"type": "pong"}))
                     else:
@@ -168,7 +178,7 @@ class AgentBridge:
                     logger.error(f"Error handling message: {e}")
                     await websocket.send(json.dumps({
                         "type": "error",
-                        "session_id": message.get("session_id", ""),
+                        "session_id": session_id,
                         "content": str(e),
                     }))
 
@@ -209,6 +219,10 @@ class AgentBridge:
                 f"MCP tools skipped: permission={permission}, "
                 f"configs_loaded={bool(self.mcp_manager.configs)}"
             )
+
+        # Add scheduler pseudo-tools for Authenticated+ users
+        if permission != "Public":
+            mcp_tools = mcp_tools + SCHEDULER_TOOLS
 
         # Add user environment context
         env_context = self._build_env_context()
@@ -281,14 +295,27 @@ class AgentBridge:
                 full_response += deny_msg
                 break
 
-            # Execute MCP tool
-            logger.info(f"Executing MCP tool: {tool_name}({tool_args})")
-            try:
-                tool_result = await self.mcp_manager.call_tool(tool_name, tool_args)
-            except Exception as e:
-                logger.error(f"MCP tool execution failed: {tool_name}: {e}")
-                tool_result = f"Error: Tool '{tool_name}' execution failed: {e}"
-            logger.info(f"Tool result: {tool_result[:200]}")
+            # Execute tool: scheduler pseudo-tools are intercepted, others go to MCP
+            if is_scheduler_tool(tool_name):
+                logger.info(f"Executing scheduler tool: {tool_name}({tool_args})")
+                tool_result = await self._execute_scheduler_tool(
+                    websocket, tool_name, tool_args, session_id, channel, message
+                )
+                logger.info(f"Scheduler tool result: {tool_result[:200]}")
+            else:
+                logger.info(f"Executing MCP tool: {tool_name}({tool_args})")
+                try:
+                    tool_result = await self.mcp_manager.call_tool(
+                        tool_name, tool_args
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"MCP tool execution failed: {tool_name}: {e}"
+                    )
+                    tool_result = (
+                        f"Error: Tool '{tool_name}' execution failed: {e}"
+                    )
+                logger.info(f"Tool result: {tool_result[:200]}")
 
             # Feed tool result back as next iteration's input
             if iteration_response:
@@ -327,6 +354,207 @@ class AgentBridge:
                 }))
             except Exception as e:
                 logger.error(f"TTS synthesis failed: {e}")
+
+    async def _execute_scheduler_tool(
+        self,
+        websocket,
+        tool_name: str,
+        tool_args: dict,
+        session_id: str,
+        channel: str,
+        message: dict,
+    ) -> str:
+        """Execute a scheduler pseudo-tool by sending a request to the Gateway."""
+        action = tool_name.removeprefix("scheduler.")
+
+        # Map tool names to Gateway action verbs
+        action_map = {
+            "create_job": "create",
+            "list_jobs": "list",
+            "delete_job": "delete",
+        }
+        gateway_action = action_map.get(action, action)
+
+        # Build the request envelope
+        request: dict = {
+            "type": "scheduler_request",
+            "session_id": session_id,
+            "action": gateway_action,
+        }
+
+        if gateway_action == "create":
+            # Extract target_id from session_id (e.g., "tg:12345" -> "12345")
+            target_id = (
+                session_id.split(":", 1)[-1] if ":" in session_id else session_id
+            )
+            channel_name = channel.lower() if channel else "telegram"
+
+            # Determine one_shot default: true for delay, false for cron
+            has_cron = "cron" in tool_args
+            one_shot = tool_args.get("one_shot", not has_cron)
+
+            # Auto-detect timezone if not specified
+            timezone = tool_args.get("timezone", _detect_iana_timezone())
+
+            request["job"] = {
+                "name": tool_args.get("message", "unnamed")[:50],
+                "message": tool_args.get("message", ""),
+                "channel": channel_name,
+                "target_id": target_id,
+                "one_shot": one_shot,
+                "timezone": timezone,
+            }
+
+            if "delay_seconds" in tool_args:
+                request["job"]["delay_seconds"] = tool_args["delay_seconds"]
+            elif "cron" in tool_args:
+                request["job"]["cron"] = tool_args["cron"]
+            elif "interval_secs" in tool_args:
+                request["job"]["interval_secs"] = tool_args["interval_secs"]
+
+        elif gateway_action == "delete":
+            request["job_id"] = tool_args.get("job_id", "")
+
+        # Send to Gateway and wait for response
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        self._scheduler_pending[session_id] = future
+
+        await websocket.send(json.dumps(request))
+        logger.info(f"Scheduler request sent: {gateway_action} for session {session_id}")
+
+        try:
+            response = await asyncio.wait_for(future, timeout=5.0)
+        except asyncio.TimeoutError:
+            return "Error: Scheduler request timed out"
+        finally:
+            self._scheduler_pending.pop(session_id, None)
+
+        # Format response for LLM consumption
+        if response.get("success"):
+            if gateway_action == "create":
+                return (
+                    f"Job created successfully. "
+                    f"Job ID: {response.get('job_id', 'unknown')}"
+                )
+            elif gateway_action == "list":
+                jobs = response.get("jobs", [])
+                if not jobs:
+                    return "No active jobs/reminders found."
+                lines = ["Active jobs:"]
+                for j in jobs:
+                    lines.append(
+                        f"- [{j.get('id', '?')}] "
+                        f"{j.get('name', '?')}: {j.get('message', '?')}"
+                    )
+                return "\n".join(lines)
+            elif gateway_action == "delete":
+                return f"Job {response.get('job_id', '')} deleted successfully."
+            return "Success"
+        else:
+            return f"Error: {response.get('error', 'Unknown error')}"
+
+    def _handle_scheduler_response(self, message: dict):
+        """Route a scheduler_response from Gateway to the waiting future."""
+        session_id = message.get("session_id", "")
+        future = self._scheduler_pending.get(session_id)
+        if future and not future.done():
+            future.set_result(message)
+        else:
+            logger.warning(
+                f"No pending scheduler request for session {session_id}"
+            )
+
+    async def _handle_scheduler_trigger(self, websocket, message: dict):
+        """Handle a scheduler trigger (reminder/heartbeat fired by Gateway)."""
+        session_id = message.get("session_id", "")
+        trigger_type = message.get("trigger_type", "")
+        job_message = message.get("message", "")
+
+        logger.info(
+            f"Scheduler trigger: type={trigger_type}, "
+            f"session={session_id}, message={job_message[:100]}"
+        )
+
+        # Build a prompt for the LLM based on trigger type
+        if trigger_type == "heartbeat":
+            # Read HEARTBEAT.md checklist
+            heartbeat_content = ""
+            try:
+                import os
+
+                hb_path = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                    "workspace",
+                    "HEARTBEAT.md",
+                )
+                if os.path.exists(hb_path):
+                    with open(hb_path, "r", encoding="utf-8") as f:
+                        heartbeat_content = f.read()
+            except Exception as e:
+                logger.warning(f"Failed to read HEARTBEAT.md: {e}")
+
+            prompt = (
+                f"[HEARTBEAT CHECK]\n"
+                f"You are performing a scheduled heartbeat check-in.\n"
+                f"{heartbeat_content}\n"
+                f"If nothing needs attention, respond with exactly: HEARTBEAT_OK\n"
+                f"If something needs the user's attention, "
+                f"compose a brief notification."
+            )
+        else:
+            # Reminder or recurring job trigger
+            prompt = (
+                f"[SCHEDULED REMINDER]\n"
+                f"A scheduled reminder has fired. "
+                f"The user asked to be reminded about:\n"
+                f'"{job_message}"\n\n'
+                f"Compose a friendly, contextual reminder message for the user. "
+                f"Be natural and helpful, as if you just remembered "
+                f"something important."
+            )
+
+        # Use the system prompt from the trigger's channel
+        channel = message.get("channel", "telegram")
+        system_prompt = (
+            message.get("system_prompt") or self.persona.system_prompt(channel)
+        )
+
+        # Add environment context
+        env_context = self._build_env_context()
+        full_system = system_prompt + env_context
+
+        # Load conversation history for context
+        history = await self.memory.get_history(session_id)
+
+        # Generate response via LLM
+        full_response = ""
+        async for chunk in self.llm_router.generate(
+            text=prompt,
+            session_id=session_id,
+            permission="Admin",
+            system_prompt=full_system,
+            history=history,
+        ):
+            text_content = chunk
+            if hasattr(chunk, "text"):
+                text_content = chunk.text or ""
+            if text_content:
+                full_response += text_content
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "type": "text_chunk",
+                            "session_id": session_id,
+                            "content": text_content,
+                        }
+                    )
+                )
+
+        # Signal completion
+        await websocket.send(
+            json.dumps({"type": "done", "session_id": session_id})
+        )
 
     async def _handle_audio_input(self, websocket, message: dict):
         """Transcribe audio input and process as chat."""
