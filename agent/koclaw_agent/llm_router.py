@@ -77,8 +77,13 @@ class LLMRouter:
         provider: str = None,
         system_prompt: str = None,
         history: list[dict] | None = None,
-    ) -> AsyncGenerator[str, None]:
-        """Generate a response from the LLM, yielding text chunks."""
+        tools: list[dict] | None = None,
+    ) -> AsyncGenerator:
+        """Generate a response from the LLM.
+
+        Yields str (text chunks) or GenerateChunk (when native tool calling
+        is used and the LLM requests a tool call).
+        """
         provider_name = provider or self.default_provider
 
         if provider_name in self._providers:
@@ -89,6 +94,7 @@ class LLMRouter:
                 attachments or [],
                 system_prompt=system_prompt,
                 history=history,
+                tools=tools,
             ):
                 yield chunk
         else:

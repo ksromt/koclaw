@@ -24,12 +24,44 @@ from .memory import FileMemory
 from .persona import Persona
 
 
+# Common UTC offset → IANA timezone mapping (covers most users)
+_UTC_OFFSET_TO_IANA: dict[int, str] = {
+    -12: "Pacific/Baker_Island", -11: "Pacific/Pago_Pago",
+    -10: "Pacific/Honolulu", -9: "America/Anchorage",
+    -8: "America/Los_Angeles", -7: "America/Denver",
+    -6: "America/Chicago", -5: "America/New_York",
+    -4: "America/Halifax", -3: "America/Sao_Paulo",
+    0: "Europe/London", 1: "Europe/Berlin", 2: "Europe/Helsinki",
+    3: "Europe/Moscow", 4: "Asia/Dubai", 5: "Asia/Karachi",
+    8: "Asia/Shanghai", 9: "Asia/Tokyo", 10: "Australia/Sydney",
+    12: "Pacific/Auckland",
+}
+
+
+def _detect_iana_timezone() -> str:
+    """Detect the system's IANA timezone name (e.g., 'Asia/Tokyo').
+
+    Uses UTC offset to map to a common IANA name. Falls back to 'Asia/Tokyo'.
+    """
+    import datetime
+
+    try:
+        offset = datetime.datetime.now().astimezone().utcoffset()
+        if offset is not None:
+            hours = int(offset.total_seconds() // 3600)
+            return _UTC_OFFSET_TO_IANA.get(hours, f"Etc/GMT{-hours:+d}")
+    except Exception:
+        pass
+
+    return "Asia/Tokyo"
+
+
 class AgentBridge:
     """WebSocket server that bridges Gateway requests to LLM responses."""
 
     def __init__(
         self,
-        host: str = "127.0.0.1",
+        host: str = "0.0.0.0",
         port: int = 18790,
         provider_configs: dict | None = None,
         mcp_configs: dict | None = None,
@@ -58,6 +90,23 @@ class AgentBridge:
                 mcp_configs.get("blocked_tools", []) if perm_mode == "blocklist" else None
             ),
         )
+
+    @staticmethod
+    def _build_env_context() -> str:
+        """Build environment context string for the LLM (timezone, locale, etc.)."""
+        import datetime
+
+        parts = []
+
+        # Detect IANA timezone name reliably
+        iana_tz = _detect_iana_timezone()
+        parts.append(f"- User timezone: {iana_tz}")
+
+        # Current date/time for context
+        now = datetime.datetime.now()
+        parts.append(f"- Current date: {now.strftime('%Y-%m-%d %H:%M')}")
+
+        return "\n\n## Environment\n" + "\n".join(parts) + "\n"
 
     def _init_tts(self):
         """Initialize TTS from persona voice config, if available."""
@@ -146,22 +195,34 @@ class AgentBridge:
         if text:
             await self.memory.add_message(session_id, "user", text)
 
-        # Build MCP tool prompt if tools available and permission allows
-        tool_prompt_section = ""
+        # Collect MCP tools if permission allows
+        mcp_tools: list[dict] = []
         if permission != "Public" and self.mcp_manager.configs:
-            tools = await self.mcp_manager.list_all_tools()
-            if tools:
-                tool_prompt_section = build_tool_prompt(tools)
+            mcp_tools = await self.mcp_manager.list_all_tools()
+            logger.info(
+                f"MCP tools available: {len(mcp_tools)} tools, "
+                f"sessions={list(self.mcp_manager._sessions.keys())}, "
+                f"permission={permission}"
+            )
+        else:
+            logger.info(
+                f"MCP tools skipped: permission={permission}, "
+                f"configs_loaded={bool(self.mcp_manager.configs)}"
+            )
 
-        full_system = system_prompt + tool_prompt_section
+        # Add user environment context
+        env_context = self._build_env_context()
+        full_system = system_prompt + env_context
 
         # LLM generation with tool execution loop (max 3 iterations)
         full_response = ""
         current_text = text
         current_attachments = message.get("attachments", [])
 
-        for iteration in range(3):
+        for _iteration in range(3):
             iteration_response = ""
+            tool_call_request = None
+
             async for chunk in self.llm_router.generate(
                 text=current_text,
                 session_id=session_id,
@@ -169,23 +230,45 @@ class AgentBridge:
                 attachments=current_attachments,
                 system_prompt=full_system,
                 history=history,
+                tools=mcp_tools if mcp_tools else None,
             ):
-                iteration_response += chunk
-                await websocket.send(json.dumps({
-                    "type": "text_chunk",
-                    "session_id": session_id,
-                    "content": chunk,
-                }))
+                # Handle native function calling (GenerateChunk with tool_call)
+                if hasattr(chunk, "tool_call") and chunk.tool_call is not None:
+                    tool_call_request = chunk.tool_call
+                    continue
+
+                # Handle text chunk (str or GenerateChunk with text)
+                text_content = chunk
+                if hasattr(chunk, "text"):
+                    text_content = chunk.text or ""
+
+                if text_content:
+                    iteration_response += text_content
+                    await websocket.send(json.dumps({
+                        "type": "text_chunk",
+                        "session_id": session_id,
+                        "content": text_content,
+                    }))
 
             full_response += iteration_response
 
-            # Check for tool call in this iteration's response
-            tool_call = parse_tool_call(iteration_response)
-            if tool_call is None:
-                break  # No tool call, generation is complete
+            # Determine tool call: native FC or prompt-based fallback
+            tool_name = ""
+            tool_args: dict = {}
 
-            tool_name = tool_call.get("tool", "")
-            tool_args = tool_call.get("arguments", {})
+            if tool_call_request is not None:
+                # Native function calling — structured tool call from LLM
+                tool_name = tool_call_request.name
+                tool_args = tool_call_request.arguments
+                logger.info(f"Native tool call: {tool_name}({tool_args})")
+            else:
+                # Prompt-based fallback — parse JSON from text
+                parsed = parse_tool_call(iteration_response)
+                if parsed is None:
+                    break  # No tool call, generation is complete
+                tool_name = parsed.get("tool", "")
+                tool_args = parsed.get("arguments", {})
+                logger.info(f"Prompt-based tool call: {tool_name}({tool_args})")
 
             # Permission check before executing
             if not self.tool_checker.is_allowed(tool_name, permission):
@@ -208,7 +291,8 @@ class AgentBridge:
             logger.info(f"Tool result: {tool_result[:200]}")
 
             # Feed tool result back as next iteration's input
-            history.append({"role": "assistant", "content": iteration_response})
+            if iteration_response:
+                history.append({"role": "assistant", "content": iteration_response})
             history.append({
                 "role": "user",
                 "content": f"[Tool Result: {tool_name}]\n{tool_result}",

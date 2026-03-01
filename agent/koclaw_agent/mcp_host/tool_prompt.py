@@ -15,13 +15,18 @@ def build_tool_prompt(tools: list[dict]) -> str:
     lines = [
         "", "## Available Tools", "",
         "You have access to the following tools via MCP (Model Context Protocol).",
-        "To use a tool, output a JSON object on its own line:", "",
+        "To use a tool, output ONLY a JSON object (nothing else):", "",
         "```json", '{"tool": "<tool_name>", "arguments": {<arguments>}}', "```", "",
         "Rules:",
+        "- Output ONLY the JSON object when calling a tool — no other text.",
         "- Only use ONE tool call per response.",
-        "- Place the JSON before any explanation text.",
         "- Do not invent tools that are not listed below.",
-        "- If no tool is needed, respond normally without JSON.", "",
+        "- If no tool is needed, respond normally without JSON.",
+        "- IMPORTANT: ALWAYS call a tool instead of saying you cannot do something.",
+        "- Do NOT ask the user for parameters that have reasonable defaults.",
+        "  For example, if the user asks 'what time is it?', immediately call "
+        "get_current_time with the user's timezone from the Environment section.",
+        "- When in doubt, call the tool with a sensible default rather than asking.", "",
         "### Tool List", "",
     ]
 

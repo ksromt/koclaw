@@ -16,7 +16,7 @@ def main():
     mcp_configs = resolve_mcp_configs(config)
 
     bridge = AgentBridge(
-        host="127.0.0.1",
+        host="0.0.0.0",
         port=18790,
         provider_configs=provider_configs,
         mcp_configs=mcp_configs,

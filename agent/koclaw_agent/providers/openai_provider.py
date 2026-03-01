@@ -4,13 +4,40 @@ Also works with DeepSeek, Ollama, and any OpenAI-compatible API
 by passing a custom base_url.
 """
 
+import json
 from typing import AsyncGenerator
 
 from loguru import logger
 
-from .base import BaseProvider
+from .base import BaseProvider, GenerateChunk, ToolCallRequest
 
 DEFAULT_MODEL = "gpt-4o"
+
+
+def _mcp_tools_to_openai(tools: list[dict]) -> list[dict]:
+    """Convert MCP tool definitions to OpenAI function calling format.
+
+    MCP format:
+      {"name": "...", "description": "...", "inputSchema": {JSON Schema}}
+
+    OpenAI format:
+      {"type": "function", "function": {"name": "...", "description": "...",
+       "parameters": {JSON Schema}}}
+    """
+    openai_tools = []
+    for tool in tools:
+        func_def: dict = {
+            "name": tool["name"],
+            "description": tool.get("description", ""),
+        }
+        schema = tool.get("inputSchema", {})
+        if schema:
+            func_def["parameters"] = schema
+        else:
+            func_def["parameters"] = {"type": "object", "properties": {}}
+
+        openai_tools.append({"type": "function", "function": func_def})
+    return openai_tools
 
 
 class OpenAIProvider(BaseProvider):
@@ -28,7 +55,8 @@ class OpenAIProvider(BaseProvider):
         attachments: list,
         system_prompt: str | None = None,
         history: list[dict] | None = None,
-    ) -> AsyncGenerator[str, None]:
+        tools: list[dict] | None = None,
+    ) -> AsyncGenerator[str | GenerateChunk, None]:
         messages = []
 
         if system_prompt:
@@ -40,13 +68,49 @@ class OpenAIProvider(BaseProvider):
 
         messages.append({"role": "user", "content": text})
 
-        stream = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            max_tokens=4096,
-            stream=True,
-        )
+        # Build API kwargs
+        kwargs: dict = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 4096,
+        }
 
-        async for chunk in stream:
-            if chunk.choices and chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
+        # Use native function calling when tools are provided
+        openai_tools = None
+        if tools:
+            openai_tools = _mcp_tools_to_openai(tools)
+            kwargs["tools"] = openai_tools
+
+        # Non-streaming when tools are provided (simpler tool call handling)
+        if openai_tools:
+            response = await self.client.chat.completions.create(**kwargs)
+            choice = response.choices[0]
+            message = choice.message
+
+            # Check for tool calls
+            if message.tool_calls:
+                tool_call = message.tool_calls[0]  # We only support one at a time
+                try:
+                    arguments = json.loads(tool_call.function.arguments)
+                except (json.JSONDecodeError, TypeError):
+                    arguments = {}
+                logger.info(
+                    f"Native tool call: {tool_call.function.name}({arguments})"
+                )
+                yield GenerateChunk(
+                    tool_call=ToolCallRequest(
+                        name=tool_call.function.name,
+                        arguments=arguments,
+                    )
+                )
+            elif message.content:
+                # LLM chose to respond with text instead of calling a tool
+                yield message.content
+        else:
+            # Streaming mode for regular chat (no tools)
+            kwargs["stream"] = True
+            stream = await self.client.chat.completions.create(**kwargs)
+
+            async for chunk in stream:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content

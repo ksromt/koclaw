@@ -48,7 +48,7 @@ class McpServerManager:
         for name, cfg_dict in configs.items():
             cfg = McpServerConfig.from_dict(name, cfg_dict)
             self.configs[name] = cfg
-            logger.info("MCP server config loaded: %s (%s)", name, cfg.command)
+            logger.info("MCP server config loaded: {} ({})", name, cfg.command)
 
     async def connect_all(self) -> None:
         """Launch all configured MCP servers and establish sessions."""
@@ -59,7 +59,7 @@ class McpServerManager:
             try:
                 await self._connect_server(name, cfg)
             except Exception:
-                logger.exception("Failed to connect MCP server: %s", name)
+                logger.exception("Failed to connect MCP server: {}", name)
 
     async def _connect_server(self, name: str, cfg: McpServerConfig) -> None:
         """Launch a single MCP server subprocess and initialize the session."""
@@ -79,7 +79,7 @@ class McpServerManager:
         )
         await session.initialize()
         self._sessions[name] = session
-        logger.info("MCP server connected: %s", name)
+        logger.info("MCP server connected: {}", name)
 
         tools_result = await session.list_tools()
         for tool in tools_result.tools:

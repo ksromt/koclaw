@@ -24,6 +24,7 @@ class AnthropicProvider(BaseProvider):
         attachments: list,
         system_prompt: str | None = None,
         history: list[dict] | None = None,
+        tools: list[dict] | None = None,
     ) -> AsyncGenerator[str, None]:
         messages = []
 
