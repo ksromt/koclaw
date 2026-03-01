@@ -4,10 +4,10 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use koclaw_common::channel::Channel;
-use tracing::{error, info};
+use koclaw_common::channel::{Channel, ChannelType};
+use tracing::{debug, error, info, warn};
 
-use koclaw_gateway::agent_bridge;
+use koclaw_gateway::agent_bridge::{self, AgentBridge, SchedulerTriggerMessage};
 use koclaw_gateway::config::{HeartbeatConfig, KoclawConfig};
 use koclaw_gateway::router;
 use koclaw_gateway::scheduler;
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
     };
 
     // Create router with agent bridge and persona
-    let router = Arc::new(router::Router::with_persona(bridge, persona));
+    let router = Arc::new(router::Router::with_persona(bridge.clone(), persona));
 
     // Start enabled channels
     if let Some(ref tg) = config.channels.telegram {
@@ -221,16 +221,21 @@ async fn main() -> Result<()> {
             engine_clone.start().await;
         });
 
-        // Spawn fired job consumer (placeholder -- will be implemented in Task 6)
+        // Wire scheduler store into bridge for Agent-initiated scheduler requests
+        bridge.set_scheduler_store(job_store.clone()).await;
+
+        // Spawn fired job consumer -- triggers Agent and delivers responses
+        let consumer_bridge = bridge.clone();
+        let consumer_router = router.clone();
         tokio::spawn(async move {
             let mut rx = fire_rx;
             while let Some(fired) = rx.recv().await {
-                info!(
-                    job_id = %fired.job.id,
-                    trigger = %fired.trigger_type,
-                    message = %fired.job.message,
-                    "Job fired (handler not yet wired)"
-                );
+                let bridge = consumer_bridge.clone();
+                let router = consumer_router.clone();
+
+                tokio::spawn(async move {
+                    handle_fired_job(fired, &bridge, &router).await;
+                });
             }
         });
 
@@ -275,6 +280,102 @@ async fn ensure_heartbeat_job(
             error!(error = %e, "Failed to create heartbeat job");
         } else {
             info!("Created heartbeat job (every {}s)", hb.interval_secs);
+        }
+    }
+}
+
+/// Handle a fired scheduler job by triggering the Agent and delivering the response.
+///
+/// For most job types, the Gateway sends a trigger to the Agent so it can generate
+/// an appropriate response (e.g., a personalized reminder). The response is then
+/// delivered to the target channel via the router.
+///
+/// For heartbeat jobs, if the Agent responds with "HEARTBEAT_OK", the message is
+/// suppressed (not delivered to the user) -- this allows the Agent to decide whether
+/// to proactively reach out or stay silent.
+///
+/// If the Agent is unavailable, a raw fallback reminder is sent directly.
+async fn handle_fired_job(
+    fired: scheduler::FiredJob,
+    bridge: &AgentBridge,
+    router: &router::Router,
+) {
+    let channel_type = match fired.job.channel.to_lowercase().as_str() {
+        "telegram" => ChannelType::Telegram,
+        "discord" => ChannelType::Discord,
+        "qq" => ChannelType::QQ,
+        "websocket" => ChannelType::WebSocket,
+        "web-public" => ChannelType::WebPublic,
+        _ => {
+            warn!(channel = %fired.job.channel, "Unknown channel for fired job");
+            return;
+        }
+    };
+
+    info!(
+        job_id = %fired.job.id,
+        trigger = %fired.trigger_type,
+        channel = %fired.job.channel,
+        target = %fired.job.target_id,
+        "Handling fired job"
+    );
+
+    // Build trigger message
+    let trigger = SchedulerTriggerMessage {
+        msg_type: "scheduler_trigger".to_string(),
+        session_id: fired.job.session_id.clone(),
+        trigger_type: fired.trigger_type.clone(),
+        job_id: fired.job.id.clone(),
+        message: fired.job.message.clone(),
+        channel: fired.job.channel.clone(),
+        target_id: fired.job.target_id.clone(),
+        permission: "Admin".to_string(), // scheduler always runs with admin permission
+    };
+
+    // Try to trigger the agent
+    match bridge.trigger(&trigger).await {
+        Ok(mut rx) => {
+            let mut full_response = String::new();
+            while let Some(chunk) = rx.recv().await {
+                match chunk.msg_type.as_str() {
+                    "text_chunk" => {
+                        if let Some(content) = &chunk.content {
+                            full_response.push_str(content);
+                        }
+                    }
+                    "done" | "error" => break,
+                    _ => {}
+                }
+            }
+
+            // Check for HEARTBEAT_OK suppression
+            if fired.trigger_type == "heartbeat"
+                && full_response.trim().contains("HEARTBEAT_OK")
+            {
+                debug!("Heartbeat OK -- suppressing delivery");
+                return;
+            }
+
+            // Deliver the response
+            if !full_response.is_empty() {
+                if let Err(e) = router
+                    .send_proactive_message(channel_type, &fired.job.target_id, &full_response)
+                    .await
+                {
+                    error!(error = %e, "Failed to deliver proactive message");
+                }
+            }
+        }
+        Err(e) => {
+            // Fallback: send raw reminder if Agent is unavailable
+            warn!(error = %e, "Agent unavailable for trigger, using fallback");
+            let fallback = format!("Reminder: {}", fired.job.message);
+            if let Err(e) = router
+                .send_proactive_message(channel_type, &fired.job.target_id, &fallback)
+                .await
+            {
+                error!(error = %e, "Failed to deliver fallback message");
+            }
         }
     }
 }

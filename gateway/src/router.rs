@@ -68,6 +68,40 @@ impl Router {
         }
         Ok(())
     }
+
+    /// Send a proactive message to a specific channel and target.
+    ///
+    /// Used by the scheduler to deliver reminders and heartbeat notifications.
+    /// Unlike `send_response`, this is not in response to an incoming message --
+    /// it originates from the scheduler firing a job.
+    pub async fn send_proactive_message(
+        &self,
+        channel_type: ChannelType,
+        target_id: &str,
+        text: &str,
+    ) -> Result<()> {
+        // Strip expression tags for non-WebSocket channels
+        let clean_text = if channel_type != ChannelType::WebSocket {
+            strip_expression_tags(text)
+        } else {
+            text.to_string()
+        };
+
+        let channels = self.channels.read().await;
+        if let Some(channel) = channels.get(&channel_type) {
+            let msg = OutgoingMessage {
+                channel: channel_type,
+                target_id: target_id.to_string(),
+                text: Some(clean_text),
+                attachments: Vec::new(),
+                reply_to: None,
+            };
+            channel.send_message(&msg).await?;
+            Ok(())
+        } else {
+            anyhow::bail!("No channel registered for {:?}", channel_type);
+        }
+    }
 }
 
 impl MessageRouter for Router {
