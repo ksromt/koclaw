@@ -102,6 +102,8 @@ koclaw/
 | Phase 1: Gateway Core + Channels | ✅ Complete | `421fb2d`..`60cb166` | 31 Rust |
 | Phase 2: Security, Discord, Memory & Persona | ✅ Complete | `408342f` | 35 Rust |
 | Phase 3: AIKokoron Integration | ✅ Complete | `bbd15a2` | 35 Rust + 14 Python |
+| Phase 3.5: Live Testing & Fixes | ✅ Complete | uncommitted | 35 Rust + 14 Python |
+| Phase 4: MCP & ClawHub Compatibility | 📋 Planned | — | 30 new (planned) |
 
 ### Phase 3 Key Components
 - **Unified Persona**: `persona.yaml` — single YAML config for both Rust and Python runtimes
@@ -121,6 +123,8 @@ koclaw/
 | 18792 | Static file server (Live2D models, voice assets) |
 
 ### Pending (Not Yet Implemented)
+- MCP Host integration (Python Agent as MCP client) — plan at `docs/plans/2026-03-01-phase4-mcp-and-clawhub.md`
+- ClawHub skill compatibility (SKILL.md parser, registry client)
 - Web SDK (`@koclaw/web-widget` npm package) — API docs ready, no source code yet
 - True zero-knowledge E2E encryption (Agent-held keys)
 - RAG knowledge base integration
