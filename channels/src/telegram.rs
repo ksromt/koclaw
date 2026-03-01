@@ -26,12 +26,14 @@ pub struct TelegramChannel {
     token: String,
     client: reqwest::Client,
     allowed_users: Vec<i64>,
+    /// Telegram user ID of the admin/owner — recognized as "shin" (先生).
+    admin_user: Option<i64>,
     /// Tracks last rejection reply time per user to avoid spamming.
     rejected_users: Mutex<HashMap<i64, Instant>>,
 }
 
 impl TelegramChannel {
-    pub fn new(token: String, allowed_users: Vec<i64>) -> Self {
+    pub fn new(token: String, allowed_users: Vec<i64>, admin_user: Option<i64>) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
@@ -41,6 +43,7 @@ impl TelegramChannel {
             token,
             client,
             allowed_users,
+            admin_user,
             rejected_users: Mutex::new(HashMap::new()),
         }
     }
@@ -136,14 +139,21 @@ impl TelegramChannel {
             return Ok(());
         }
 
-        let display_name = msg.from.as_ref().map(|u| {
-            let mut name = u.first_name.clone();
-            if let Some(ref last) = u.last_name {
-                name.push(' ');
-                name.push_str(last);
-            }
-            name
-        });
+        let is_admin = self.admin_user.is_some_and(|admin_id| admin_id == user_id);
+
+        // For admin user, set display_name to "shin" so the Router can inject identity context
+        let display_name = if is_admin {
+            Some("shin".to_string())
+        } else {
+            msg.from.as_ref().map(|u| {
+                let mut name = u.first_name.clone();
+                if let Some(ref last) = u.last_name {
+                    name.push(' ');
+                    name.push_str(last);
+                }
+                name
+            })
+        };
 
         let mut attachments = Vec::new();
 
@@ -188,6 +198,12 @@ impl TelegramChannel {
             }
         }
 
+        let permission = if is_admin {
+            PermissionLevel::Admin
+        } else {
+            PermissionLevel::Authenticated
+        };
+
         let incoming = IncomingMessage {
             id: msg.message_id.to_string(),
             channel: ChannelType::Telegram,
@@ -195,7 +211,7 @@ impl TelegramChannel {
             display_name,
             text: msg.text.or(msg.caption),
             attachments,
-            permission: PermissionLevel::Authenticated,
+            permission,
             session_id: format!("tg:{}", msg.chat.id),
             timestamp: msg.date as u64,
         };

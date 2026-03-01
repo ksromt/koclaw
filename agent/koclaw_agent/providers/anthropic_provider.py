@@ -1,10 +1,5 @@
-"""Anthropic (Claude) LLM provider.
+"""Anthropic (Claude) LLM provider."""
 
-Reference: AIKokoron's implementation at
-D:\\personal_development\\AI_assistant\\AIKokoron\\src\\open_llm_vtuber\\agent\\stateless_llm\\
-"""
-
-import os
 from typing import AsyncGenerator
 
 from loguru import logger
@@ -12,21 +7,14 @@ from loguru import logger
 from .base import BaseProvider
 
 DEFAULT_MODEL = "claude-sonnet-4-20250514"
-DEFAULT_SYSTEM_PROMPT = (
-    "You are Kokoron, a helpful and friendly AI assistant. "
-    "Respond naturally and concisely. You can communicate in "
-    "English, Japanese, and Chinese."
-)
 
 
 class AnthropicProvider(BaseProvider):
-    def __init__(self):
+    def __init__(self, api_key: str, model: str | None = None):
         import anthropic
 
-        self.client = anthropic.AsyncAnthropic(
-            api_key=os.environ.get("ANTHROPIC_API_KEY"),
-        )
-        self.model = os.environ.get("KOCLAW_ANTHROPIC_MODEL", DEFAULT_MODEL)
+        self.client = anthropic.AsyncAnthropic(api_key=api_key)
+        self.model = model or DEFAULT_MODEL
         logger.info(f"Anthropic provider ready: model={self.model}")
 
     async def generate(
@@ -48,7 +36,7 @@ class AnthropicProvider(BaseProvider):
         async with self.client.messages.stream(
             model=self.model,
             max_tokens=4096,
-            system=system_prompt or DEFAULT_SYSTEM_PROMPT,
+            system=system_prompt or "",
             messages=messages,
         ) as stream:
             async for chunk in stream.text_stream:

@@ -175,7 +175,13 @@ impl Channel for WebSocketChannel {
 
         Box::pin(async move {
             let clients = clients.read().await;
-            if let Some(tx) = clients.get(&target_id) {
+            // Look up by target_id directly, or with "ws:" prefix
+            // (Router strips channel prefix from session_id)
+            let tx = clients.get(&target_id).or_else(|| {
+                let ws_key = format!("ws:{target_id}");
+                clients.get(&ws_key)
+            });
+            if let Some(tx) = tx {
                 let payload = serde_json::json!({
                     "type": "full-text",
                     "text": text,

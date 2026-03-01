@@ -123,8 +123,19 @@ impl MessageRouter for Router {
                 return Ok(());
             }
 
+            // Build system prompt with identity context for admin users
+            let mut system_prompt = self.persona.system_prompt(message.channel);
+            if let Some(ref name) = message.display_name {
+                if name == "shin" {
+                    system_prompt.push_str(
+                        "\n\n現在あなたが話している相手はshin先生本人です。\
+                         「先生」と直接呼んでください。「shin先生」ではなく「先生」です。"
+                    );
+                }
+            }
+
             let context = ChatContext {
-                system_prompt: Some(self.persona.system_prompt(message.channel)),
+                system_prompt: Some(system_prompt),
                 ..Default::default()
             };
 
@@ -184,6 +195,12 @@ impl MessageRouter for Router {
                     .map(|(_, id)| id)
                     .unwrap_or(&message.session_id);
 
+                // Strip expression tags for non-Live2D channels (Telegram, QQ, Discord).
+                // WebSocket clients use these for Live2D animation; others don't.
+                if message.channel != ChannelType::WebSocket {
+                    full_response = strip_expression_tags(&full_response);
+                }
+
                 // For WebSocket clients, include audio attachment if available
                 let mut attachments = Vec::new();
                 if message.channel == ChannelType::WebSocket {
@@ -218,4 +235,37 @@ impl MessageRouter for Router {
             Ok(())
         })
     }
+}
+
+/// Strip bracketed expression tags (e.g. `[joy]`, `[smile]`, `[wink]`) from text.
+///
+/// Removes any `[single_word]` pattern where the word is purely alphabetic.
+/// This catches both known Live2D expressions and LLM-invented ones.
+/// Multi-word brackets like `[see this link]` are left intact.
+fn strip_expression_tags(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '[' {
+            // Look for closing bracket
+            if let Some(end) = chars[i + 1..].iter().position(|&c| c == ']') {
+                let inner: String = chars[i + 1..i + 1 + end].iter().collect();
+                // Strip only single-word alphabetic tags (emotion markers)
+                if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_alphabetic()) {
+                    i += end + 2; // skip past ']'
+                    continue;
+                }
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+
+    // Collapse double spaces and trim
+    while result.contains("  ") {
+        result = result.replace("  ", " ");
+    }
+    result.trim().to_string()
 }

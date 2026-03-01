@@ -77,6 +77,7 @@ async fn main() -> Result<()> {
                     let channel = Arc::new(koclaw_channels::telegram::TelegramChannel::new(
                         token,
                         tg.allowed_users.clone(),
+                        tg.admin_user,
                     ));
                     router.register_channel(channel.clone()).await;
 

@@ -2,15 +2,9 @@
 LLM Router — routes chat requests to the appropriate LLM provider.
 
 Supports: Anthropic (Claude), OpenAI, DeepSeek, Ollama (local).
-Provider selection is config-driven; adding a new provider requires only
-implementing the generate() async generator pattern.
-
-NOTE: AIKokoron already has LLM implementations at:
-  D:\\personal_development\\AI_assistant\\AIKokoron\\src\\open_llm_vtuber\\agent\\stateless_llm\\
-These can be adapted when integrating the full pipeline in Phase 2.
+Provider selection is config-driven via config.toml.
 """
 
-import os
 from typing import AsyncGenerator
 
 from loguru import logger
@@ -19,26 +13,55 @@ from loguru import logger
 class LLMRouter:
     """Routes requests to the configured LLM provider and streams responses."""
 
-    def __init__(self):
-        self.default_provider = os.environ.get("KOCLAW_DEFAULT_PROVIDER", "anthropic")
+    def __init__(self, provider_configs: dict | None = None):
         self._providers: dict[str, object] = {}
+        self._configs = provider_configs or {}
+        self.default_provider = self._configs.get("_default", "anthropic")
         self._init_providers()
 
     def _init_providers(self):
-        """Initialize available providers based on environment variables."""
-        if os.environ.get("ANTHROPIC_API_KEY"):
+        """Initialize available providers based on resolved config."""
+        # OpenAI
+        openai_cfg = self._configs.get("openai", {})
+        if openai_cfg.get("api_key"):
+            try:
+                from .providers.openai_provider import OpenAIProvider
+
+                self._providers["openai"] = OpenAIProvider(
+                    api_key=openai_cfg["api_key"],
+                    model=openai_cfg.get("model"),
+                    base_url=openai_cfg.get("base_url"),
+                )
+                logger.info("OpenAI provider initialized")
+            except ImportError:
+                logger.warning("openai package not installed")
+
+        # Anthropic
+        anthropic_cfg = self._configs.get("anthropic", {})
+        if anthropic_cfg.get("api_key"):
             try:
                 from .providers.anthropic_provider import AnthropicProvider
-                self._providers["anthropic"] = AnthropicProvider()
+
+                self._providers["anthropic"] = AnthropicProvider(
+                    api_key=anthropic_cfg["api_key"],
+                    model=anthropic_cfg.get("model"),
+                )
                 logger.info("Anthropic provider initialized")
             except ImportError:
                 logger.warning("anthropic package not installed")
 
-        if os.environ.get("OPENAI_API_KEY"):
+        # DeepSeek (OpenAI-compatible)
+        deepseek_cfg = self._configs.get("deepseek", {})
+        if deepseek_cfg.get("api_key"):
             try:
                 from .providers.openai_provider import OpenAIProvider
-                self._providers["openai"] = OpenAIProvider()
-                logger.info("OpenAI provider initialized")
+
+                self._providers["deepseek"] = OpenAIProvider(
+                    api_key=deepseek_cfg["api_key"],
+                    model=deepseek_cfg.get("model", "deepseek-chat"),
+                    base_url=deepseek_cfg.get("base_url", "https://api.deepseek.com/v1"),
+                )
+                logger.info("DeepSeek provider initialized")
             except ImportError:
                 logger.warning("openai package not installed")
 
@@ -69,7 +92,6 @@ class LLMRouter:
             ):
                 yield chunk
         else:
-            # Echo mode — useful for testing without API keys
             logger.debug(f"Echo mode: {text}")
             yield f"[Echo] {text}"
-            yield "\n\n(No LLM provider configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY)"
+            yield "\n\n(No LLM provider configured for '{provider_name}')"

@@ -1,10 +1,9 @@
 """OpenAI-compatible LLM provider.
 
 Also works with DeepSeek, Ollama, and any OpenAI-compatible API
-by setting OPENAI_BASE_URL.
+by passing a custom base_url.
 """
 
-import os
 from typing import AsyncGenerator
 
 from loguru import logger
@@ -12,23 +11,15 @@ from loguru import logger
 from .base import BaseProvider
 
 DEFAULT_MODEL = "gpt-4o"
-DEFAULT_SYSTEM_PROMPT = (
-    "You are Kokoron, a helpful and friendly AI assistant. "
-    "Respond naturally and concisely. You can communicate in "
-    "English, Japanese, and Chinese."
-)
 
 
 class OpenAIProvider(BaseProvider):
-    def __init__(self):
+    def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
         import openai
 
-        self.client = openai.AsyncOpenAI(
-            api_key=os.environ.get("OPENAI_API_KEY"),
-            base_url=os.environ.get("OPENAI_BASE_URL"),
-        )
-        self.model = os.environ.get("KOCLAW_OPENAI_MODEL", DEFAULT_MODEL)
-        logger.info(f"OpenAI provider ready: model={self.model}")
+        self.client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self.model = model or DEFAULT_MODEL
+        logger.info(f"OpenAI provider ready: model={self.model}, base_url={base_url or 'default'}")
 
     async def generate(
         self,
@@ -38,9 +29,10 @@ class OpenAIProvider(BaseProvider):
         system_prompt: str | None = None,
         history: list[dict] | None = None,
     ) -> AsyncGenerator[str, None]:
-        messages = [
-            {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
-        ]
+        messages = []
+
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
 
         if history:
             for msg in history:

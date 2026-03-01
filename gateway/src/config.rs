@@ -78,6 +78,9 @@ pub struct TelegramConfig {
     pub webhook_url: Option<String>,
     #[serde(default)]
     pub allowed_users: Vec<i64>,
+    /// Telegram user ID of the admin (owner). When matched, the bot recognizes
+    /// the user as its master and adjusts conversation accordingly.
+    pub admin_user: Option<i64>,
 }
 
 impl TelegramConfig {

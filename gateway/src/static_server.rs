@@ -15,7 +15,7 @@ use tracing::info;
 /// Start an HTTP server that serves static files from a directory.
 pub async fn start_static_server(host: &str, port: u16, root: PathBuf) -> Result<()> {
     let app = Router::new()
-        .nest_service("/", ServeDir::new(&root))
+        .fallback_service(ServeDir::new(&root))
         .layer(CorsLayer::permissive());
 
     let addr: SocketAddr = format!("{host}:{port}").parse()?;
