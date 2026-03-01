@@ -53,6 +53,12 @@ tower-http = { version = "0.6", features = ["fs", "cors"] }
 # Database
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+# Scheduler
+uuid = { version = "1", features = ["v4"] }
+cron = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+
 # Shared crates
 koclaw-common = { path = "common" }
 koclaw-channels = { path = "channels" }

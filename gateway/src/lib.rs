@@ -4,4 +4,5 @@
 pub mod agent_bridge;
 pub mod config;
 pub mod router;
+pub mod scheduler;
 pub mod static_server;
