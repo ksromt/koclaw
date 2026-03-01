@@ -10,6 +10,8 @@ pub struct KoclawConfig {
     pub channels: ChannelsConfig,
     #[serde(default)]
     pub providers: ProvidersConfig,
+    #[serde(default)]
+    pub scheduler: SchedulerConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,6 +159,61 @@ pub struct ProviderEntry {
     pub base_url: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SchedulerConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_scheduler_storage")]
+    pub storage_path: String,
+    #[serde(default = "default_tick_interval")]
+    pub tick_interval_ms: u64,
+    #[serde(default)]
+    pub heartbeat: HeartbeatConfig,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            storage_path: default_scheduler_storage(),
+            tick_interval_ms: default_tick_interval(),
+            heartbeat: HeartbeatConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HeartbeatConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_heartbeat_interval")]
+    pub interval_secs: u64,
+    #[serde(default)]
+    pub channel: String,
+    #[serde(default)]
+    pub target_id: String,
+    #[serde(default = "default_active_start")]
+    pub active_hours_start: String,
+    #[serde(default = "default_active_end")]
+    pub active_hours_end: String,
+    #[serde(default = "default_heartbeat_tz")]
+    pub timezone: String,
+}
+
+impl Default for HeartbeatConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: default_heartbeat_interval(),
+            channel: String::new(),
+            target_id: String::new(),
+            active_hours_start: default_active_start(),
+            active_hours_end: default_active_end(),
+            timezone: default_heartbeat_tz(),
+        }
+    }
+}
+
 impl KoclawConfig {
     /// Load configuration from a TOML file.
     pub fn from_file(path: &Path) -> Result<Self> {
@@ -224,3 +281,98 @@ fn default_static_host() -> String { "127.0.0.1".to_string() }
 fn default_static_port() -> u16 { 18792 }
 fn default_static_root() -> String { "./assets".to_string() }
 fn default_provider() -> String { "anthropic".to_string() }
+fn default_scheduler_storage() -> String { "./data/scheduler_jobs.json".to_string() }
+fn default_tick_interval() -> u64 { 1000 }
+fn default_heartbeat_interval() -> u64 { 1800 } // 30 minutes
+fn default_active_start() -> String { "09:00".to_string() }
+fn default_active_end() -> String { "22:00".to_string() }
+fn default_heartbeat_tz() -> String { "Asia/Tokyo".to_string() }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scheduler_config_defaults() {
+        let config = SchedulerConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.storage_path, "./data/scheduler_jobs.json");
+        assert_eq!(config.tick_interval_ms, 1000);
+        assert!(!config.heartbeat.enabled);
+    }
+
+    #[test]
+    fn test_heartbeat_config_defaults() {
+        let config = HeartbeatConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.interval_secs, 1800);
+        assert!(config.channel.is_empty());
+        assert!(config.target_id.is_empty());
+        assert_eq!(config.active_hours_start, "09:00");
+        assert_eq!(config.active_hours_end, "22:00");
+        assert_eq!(config.timezone, "Asia/Tokyo");
+    }
+
+    #[test]
+    fn test_scheduler_config_from_toml() {
+        let toml_str = r#"
+            [gateway]
+            host = "127.0.0.1"
+            port = 18789
+            agent_url = "ws://127.0.0.1:18790"
+
+            [channels]
+
+            [scheduler]
+            enabled = true
+            storage_path = "/tmp/jobs.json"
+            tick_interval_ms = 500
+
+            [scheduler.heartbeat]
+            enabled = true
+            interval_secs = 3600
+            channel = "telegram"
+            target_id = "12345"
+            active_hours_start = "10:00"
+            active_hours_end = "20:00"
+            timezone = "America/New_York"
+        "#;
+
+        let config: KoclawConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.scheduler.enabled);
+        assert_eq!(config.scheduler.storage_path, "/tmp/jobs.json");
+        assert_eq!(config.scheduler.tick_interval_ms, 500);
+
+        let hb = &config.scheduler.heartbeat;
+        assert!(hb.enabled);
+        assert_eq!(hb.interval_secs, 3600);
+        assert_eq!(hb.channel, "telegram");
+        assert_eq!(hb.target_id, "12345");
+        assert_eq!(hb.active_hours_start, "10:00");
+        assert_eq!(hb.active_hours_end, "20:00");
+        assert_eq!(hb.timezone, "America/New_York");
+    }
+
+    #[test]
+    fn test_scheduler_config_missing_uses_defaults() {
+        let toml_str = r#"
+            [gateway]
+            host = "127.0.0.1"
+            port = 18789
+            agent_url = "ws://127.0.0.1:18790"
+
+            [channels]
+        "#;
+
+        let config: KoclawConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.scheduler.enabled);
+        assert_eq!(config.scheduler.storage_path, "./data/scheduler_jobs.json");
+        assert_eq!(config.scheduler.tick_interval_ms, 1000);
+        assert!(!config.scheduler.heartbeat.enabled);
+        assert_eq!(config.scheduler.heartbeat.interval_secs, 1800);
+        assert_eq!(config.scheduler.heartbeat.timezone, "Asia/Tokyo");
+    }
+}

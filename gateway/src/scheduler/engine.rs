@@ -2,6 +2,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
+use chrono::Timelike;
+use chrono_tz::Tz;
 use tokio::sync::mpsc;
 
 use super::{JobSchedule, JobStore, JobType, SchedulerJob};
@@ -21,6 +23,9 @@ pub struct SchedulerEngine {
     store: Arc<JobStore>,
     fire_tx: mpsc::Sender<FiredJob>,
     tick_interval_ms: u64,
+    heartbeat_active_start: Option<String>,
+    heartbeat_active_end: Option<String>,
+    heartbeat_timezone: String,
 }
 
 impl SchedulerEngine {
@@ -28,12 +33,77 @@ impl SchedulerEngine {
         store: Arc<JobStore>,
         fire_tx: mpsc::Sender<FiredJob>,
         tick_interval_ms: u64,
+        heartbeat_active_start: Option<String>,
+        heartbeat_active_end: Option<String>,
+        heartbeat_timezone: String,
     ) -> Self {
         Self {
             store,
             fire_tx,
             tick_interval_ms,
+            heartbeat_active_start,
+            heartbeat_active_end,
+            heartbeat_timezone,
         }
+    }
+
+    /// Check if the current time is within heartbeat active hours.
+    /// Returns true if active_hours are not configured (always active).
+    fn is_in_active_hours(
+        active_start: Option<&str>,
+        active_end: Option<&str>,
+        timezone: &str,
+    ) -> bool {
+        let (start_str, end_str) = match (active_start, active_end) {
+            (Some(s), Some(e)) => (s, e),
+            _ => return true,
+        };
+
+        let parse_hm = |s: &str| -> Option<(u32, u32)> {
+            let parts: Vec<&str> = s.split(':').collect();
+            if parts.len() != 2 {
+                return None;
+            }
+            let h = parts[0].parse::<u32>().ok()?;
+            let m = parts[1].parse::<u32>().ok()?;
+            Some((h, m))
+        };
+
+        let (sh, sm) = match parse_hm(start_str) {
+            Some(v) => v,
+            None => return true,
+        };
+        let (eh, em) = match parse_hm(end_str) {
+            Some(v) => v,
+            None => return true,
+        };
+
+        let tz: Tz = match timezone.parse() {
+            Ok(t) => t,
+            Err(_) => return true,
+        };
+
+        let now = chrono::Utc::now().with_timezone(&tz);
+        let now_minutes = now.hour() * 60 + now.minute();
+        let start_minutes = sh * 60 + sm;
+        let end_minutes = eh * 60 + em;
+
+        if start_minutes <= end_minutes {
+            // Normal range: e.g., 09:00 to 22:00
+            now_minutes >= start_minutes && now_minutes < end_minutes
+        } else {
+            // Overnight range: e.g., 22:00 to 06:00
+            now_minutes >= start_minutes || now_minutes < end_minutes
+        }
+    }
+
+    /// Returns true if a heartbeat job should be allowed to fire right now.
+    fn heartbeat_allowed(&self) -> bool {
+        Self::is_in_active_hours(
+            self.heartbeat_active_start.as_deref(),
+            self.heartbeat_active_end.as_deref(),
+            &self.heartbeat_timezone,
+        )
     }
 
     /// Start the infinite tick loop.  Runs until the `fire_tx` receiver is
@@ -61,6 +131,10 @@ impl SchedulerEngine {
                 continue;
             }
             if !job.is_due(now_ms) {
+                continue;
+            }
+            // Skip heartbeat jobs outside active hours
+            if job.job_type == JobType::Heartbeat && !self.heartbeat_allowed() {
                 continue;
             }
 
@@ -100,6 +174,10 @@ impl SchedulerEngine {
                 continue;
             }
             if !job.is_due(now_ms) {
+                continue;
+            }
+            // Skip heartbeat jobs outside active hours
+            if job.job_type == JobType::Heartbeat && !self.heartbeat_allowed() {
                 continue;
             }
 
@@ -164,7 +242,14 @@ mod tests {
         let store = Arc::new(JobStore::new(&path));
         store.load().await.unwrap();
         let (tx, rx) = mpsc::channel(32);
-        let engine = Arc::new(SchedulerEngine::new(store.clone(), tx, tick_ms));
+        let engine = Arc::new(SchedulerEngine::new(
+            store.clone(),
+            tx,
+            tick_ms,
+            None,
+            None,
+            "UTC".to_string(),
+        ));
         // Prevent tempdir from being dropped (which deletes the directory).
         // The dir must outlive the store; `forget` keeps it alive for the test.
         std::mem::forget(dir);
@@ -404,5 +489,110 @@ mod tests {
         assert_eq!(find("tt2"), "recurring");
         assert_eq!(find("tt3"), "heartbeat");
         assert_eq!(find("tt4"), "system");
+    }
+
+    // ----- test_is_in_active_hours ---------------------------------------------
+    #[test]
+    fn test_is_in_active_hours() {
+        // No start/end configured -> always active
+        assert!(SchedulerEngine::is_in_active_hours(None, None, "UTC"));
+        assert!(SchedulerEngine::is_in_active_hours(Some("09:00"), None, "UTC"));
+        assert!(SchedulerEngine::is_in_active_hours(None, Some("22:00"), "UTC"));
+
+        // Invalid format -> falls back to true
+        assert!(SchedulerEngine::is_in_active_hours(
+            Some("bad"),
+            Some("22:00"),
+            "UTC"
+        ));
+        assert!(SchedulerEngine::is_in_active_hours(
+            Some("09:00"),
+            Some("bad"),
+            "UTC"
+        ));
+
+        // Invalid timezone -> falls back to true
+        assert!(SchedulerEngine::is_in_active_hours(
+            Some("09:00"),
+            Some("22:00"),
+            "Invalid/Zone"
+        ));
+
+        // Normal range 00:00 to 23:59 covers the full day -> always in range
+        assert!(SchedulerEngine::is_in_active_hours(
+            Some("00:00"),
+            Some("23:59"),
+            "UTC"
+        ));
+
+        // Range 00:00 to 00:00 (start == end) -> wrap-around logic covers full day
+        // (now_minutes >= 0 || now_minutes < 0 is always true since start_minutes == end_minutes
+        //  and the else branch triggers: now >= 0 is always true)
+        // Actually start == end triggers the normal branch where now >= 0 && now < 0 is false.
+        // This is a degenerate case: active window of zero minutes.
+        assert!(!SchedulerEngine::is_in_active_hours(
+            Some("00:00"),
+            Some("00:00"),
+            "UTC"
+        ));
+    }
+
+    // ----- test_heartbeat_skipped_outside_active_hours ---------------------------
+    #[tokio::test]
+    async fn test_heartbeat_skipped_outside_active_hours() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test_jobs.json");
+        let store = Arc::new(JobStore::new(&path));
+        store.load().await.unwrap();
+        let (tx, mut rx) = mpsc::channel(32);
+
+        // Create an engine with an active hours window that is impossible:
+        // start == end means zero-minute window, so heartbeats will always be skipped.
+        let engine = Arc::new(SchedulerEngine::new(
+            store.clone(),
+            tx,
+            1000,
+            Some("00:00".to_string()),
+            Some("00:00".to_string()),
+            "UTC".to_string(),
+        ));
+
+        // Insert a heartbeat job that is due now.
+        let hb_job = make_job_with(
+            "hb1",
+            JobSchedule::Every { interval_secs: 60 },
+            JobType::Heartbeat,
+            false,
+            true,
+        );
+        // Insert a regular user job that is also due now.
+        let user_job = make_job_with(
+            "usr1",
+            JobSchedule::At {
+                timestamp_ms: 1_000_000_000_000,
+            },
+            JobType::User,
+            true,
+            true,
+        );
+
+        store.insert(hb_job).await.unwrap();
+        store.insert(user_job).await.unwrap();
+
+        engine.tick().await.unwrap();
+
+        // Only the user job should have fired; heartbeat should be skipped.
+        let mut fired_ids = Vec::new();
+        while let Ok(f) = rx.try_recv() {
+            fired_ids.push(f.job.id.clone());
+        }
+        assert_eq!(fired_ids.len(), 1);
+        assert_eq!(fired_ids[0], "usr1");
+
+        // Heartbeat job should still be in the store, untouched.
+        let hb = store.get("hb1").await.expect("heartbeat job should still exist");
+        assert!(hb.last_fired_at.is_none());
+
+        std::mem::forget(dir);
     }
 }

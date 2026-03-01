@@ -8,8 +8,9 @@ use koclaw_common::channel::Channel;
 use tracing::{error, info};
 
 use koclaw_gateway::agent_bridge;
-use koclaw_gateway::config::KoclawConfig;
+use koclaw_gateway::config::{HeartbeatConfig, KoclawConfig};
 use koclaw_gateway::router;
+use koclaw_gateway::scheduler;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -174,6 +175,72 @@ async fn main() -> Result<()> {
         }
     }
 
+    // Start scheduler
+    if config.scheduler.enabled {
+        let job_store = Arc::new(scheduler::JobStore::new(
+            &config.scheduler.storage_path,
+        ));
+        if let Err(e) = job_store.load().await {
+            error!(error = %e, "Failed to load scheduler jobs");
+        }
+
+        // Ensure heartbeat job exists if configured
+        if config.scheduler.heartbeat.enabled {
+            ensure_heartbeat_job(&job_store, &config.scheduler.heartbeat).await;
+        }
+
+        let (fire_tx, fire_rx) = tokio::sync::mpsc::channel(64);
+
+        let engine = Arc::new(scheduler::SchedulerEngine::new(
+            job_store.clone(),
+            fire_tx,
+            config.scheduler.tick_interval_ms,
+            if config.scheduler.heartbeat.enabled {
+                Some(config.scheduler.heartbeat.active_hours_start.clone())
+            } else {
+                None
+            },
+            if config.scheduler.heartbeat.enabled {
+                Some(config.scheduler.heartbeat.active_hours_end.clone())
+            } else {
+                None
+            },
+            config.scheduler.heartbeat.timezone.clone(),
+        ));
+
+        // Fire overdue jobs from previous shutdown
+        match engine.fire_overdue().await {
+            Ok(n) if n > 0 => info!(count = n, "Fired overdue jobs from previous shutdown"),
+            Ok(_) => {}
+            Err(e) => error!(error = %e, "Error firing overdue jobs"),
+        }
+
+        // Spawn the tick loop
+        let engine_clone = engine.clone();
+        tokio::spawn(async move {
+            engine_clone.start().await;
+        });
+
+        // Spawn fired job consumer (placeholder -- will be implemented in Task 6)
+        tokio::spawn(async move {
+            let mut rx = fire_rx;
+            while let Some(fired) = rx.recv().await {
+                info!(
+                    job_id = %fired.job.id,
+                    trigger = %fired.trigger_type,
+                    message = %fired.job.message,
+                    "Job fired (handler not yet wired)"
+                );
+            }
+        });
+
+        info!(
+            storage = %config.scheduler.storage_path,
+            heartbeat = config.scheduler.heartbeat.enabled,
+            "Scheduler started"
+        );
+    }
+
     info!("Koclaw Gateway ready");
 
     // Keep running until Ctrl+C
@@ -181,4 +248,33 @@ async fn main() -> Result<()> {
     info!("Shutting down...");
 
     Ok(())
+}
+
+async fn ensure_heartbeat_job(
+    store: &scheduler::JobStore,
+    hb: &HeartbeatConfig,
+) {
+    let jobs = store.list().await;
+    let has_heartbeat = jobs.iter().any(|j| j.job_type == scheduler::JobType::Heartbeat);
+
+    if !has_heartbeat {
+        let job = scheduler::SchedulerJob::new(
+            "heartbeat",
+            &hb.channel,
+            &hb.target_id,
+            "system:heartbeat",
+            "system",
+            "Heartbeat check-in",
+            scheduler::JobSchedule::Every {
+                interval_secs: hb.interval_secs,
+            },
+            false, // never delete
+            scheduler::JobType::Heartbeat,
+        );
+        if let Err(e) = store.insert(job).await {
+            error!(error = %e, "Failed to create heartbeat job");
+        } else {
+            info!("Created heartbeat job (every {}s)", hb.interval_secs);
+        }
+    }
 }
