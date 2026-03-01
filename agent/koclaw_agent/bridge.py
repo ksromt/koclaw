@@ -148,8 +148,28 @@ class AgentBridge:
         return None
 
     async def handle_connection(self, websocket: websockets.WebSocketServerProtocol):
-        """Handle a single Gateway connection."""
+        """Handle a single Gateway connection.
+
+        Long-running handlers (_handle_chat, _handle_scheduler_trigger,
+        _handle_audio_input) are spawned as independent tasks so the
+        message loop keeps receiving incoming messages.  This is critical
+        for scheduler_response messages: the Agent sends a
+        scheduler_request *inside* _handle_chat and waits for the
+        Gateway's scheduler_response — which arrives on the same
+        WebSocket.  If _handle_chat were awaited inline, the async-for
+        loop would never yield to receive the response, causing a
+        deadlock (5 s timeout).
+        """
         logger.info("Gateway connected")
+        # Track spawned tasks so we can clean up on disconnect
+        active_tasks: set[asyncio.Task] = set()
+
+        def _on_task_done(task: asyncio.Task):
+            active_tasks.discard(task)
+            if not task.cancelled() and task.exception() is not None:
+                logger.error(
+                    f"Background handler error: {task.exception()}"
+                )
 
         try:
             async for raw_message in websocket:
@@ -160,11 +180,23 @@ class AgentBridge:
                     msg_type = message.get("type", "")
 
                     if msg_type == "chat":
-                        await self._handle_chat(websocket, message)
+                        task = asyncio.create_task(
+                            self._handle_chat(websocket, message)
+                        )
+                        active_tasks.add(task)
+                        task.add_done_callback(_on_task_done)
                     elif msg_type == "audio_input":
-                        await self._handle_audio_input(websocket, message)
+                        task = asyncio.create_task(
+                            self._handle_audio_input(websocket, message)
+                        )
+                        active_tasks.add(task)
+                        task.add_done_callback(_on_task_done)
                     elif msg_type == "scheduler_trigger":
-                        await self._handle_scheduler_trigger(websocket, message)
+                        task = asyncio.create_task(
+                            self._handle_scheduler_trigger(websocket, message)
+                        )
+                        active_tasks.add(task)
+                        task.add_done_callback(_on_task_done)
                     elif msg_type == "scheduler_response":
                         self._handle_scheduler_response(message)
                     elif msg_type == "ping":
@@ -184,6 +216,12 @@ class AgentBridge:
 
         except websockets.exceptions.ConnectionClosed:
             logger.info("Gateway disconnected")
+        finally:
+            # Cancel any still-running handlers on disconnect
+            for task in active_tasks:
+                task.cancel()
+            if active_tasks:
+                await asyncio.gather(*active_tasks, return_exceptions=True)
 
     async def _handle_chat(self, websocket, message: dict):
         """Process a chat request, execute MCP tools if needed, stream response."""
@@ -365,7 +403,7 @@ class AgentBridge:
         message: dict,
     ) -> str:
         """Execute a scheduler pseudo-tool by sending a request to the Gateway."""
-        action = tool_name.removeprefix("scheduler.")
+        action = tool_name.removeprefix("scheduler_")
 
         # Map tool names to Gateway action verbs
         action_map = {

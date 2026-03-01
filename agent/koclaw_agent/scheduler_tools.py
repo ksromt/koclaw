@@ -7,7 +7,7 @@ by the bridge and routed as scheduler_request messages to the Gateway.
 
 SCHEDULER_TOOLS: list[dict] = [
     {
-        "name": "scheduler.create_job",
+        "name": "scheduler_create_job",
         "description": (
             "Create a timed reminder or recurring job. "
             "Use this when the user asks to be reminded of something, "
@@ -56,7 +56,7 @@ SCHEDULER_TOOLS: list[dict] = [
         "_mcp_server": "_scheduler",
     },
     {
-        "name": "scheduler.list_jobs",
+        "name": "scheduler_list_jobs",
         "description": (
             "List active scheduled jobs/reminders for the current user. "
             "Use when the user asks '\u30ea\u30de\u30a4\u30f3\u30c0\u30fc\u4e00\u89a7' or 'what reminders do I have'."
@@ -68,7 +68,7 @@ SCHEDULER_TOOLS: list[dict] = [
         "_mcp_server": "_scheduler",
     },
     {
-        "name": "scheduler.delete_job",
+        "name": "scheduler_delete_job",
         "description": (
             "Cancel/delete a scheduled job by its ID. "
             "Use when the user wants to cancel a reminder or recurring job."
@@ -90,4 +90,4 @@ SCHEDULER_TOOLS: list[dict] = [
 
 def is_scheduler_tool(tool_name: str) -> bool:
     """Check if a tool name is a scheduler pseudo-tool."""
-    return tool_name.startswith("scheduler.")
+    return tool_name.startswith("scheduler_")

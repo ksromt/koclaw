@@ -20,9 +20,9 @@ def test_scheduler_tool_names():
     """Verify tool names follow the scheduler.* pattern."""
     names = {t["name"] for t in SCHEDULER_TOOLS}
     assert names == {
-        "scheduler.create_job",
-        "scheduler.list_jobs",
-        "scheduler.delete_job",
+        "scheduler_create_job",
+        "scheduler_list_jobs",
+        "scheduler_delete_job",
     }
 
 
@@ -37,7 +37,7 @@ def test_scheduler_tool_schemas():
 
 def test_create_job_schema():
     """Verify create_job has the expected properties."""
-    tool = next(t for t in SCHEDULER_TOOLS if t["name"] == "scheduler.create_job")
+    tool = next(t for t in SCHEDULER_TOOLS if t["name"] == "scheduler_create_job")
     schema = tool["inputSchema"]
     props = schema["properties"]
     assert "message" in props
@@ -50,7 +50,7 @@ def test_create_job_schema():
 
 def test_delete_job_schema():
     """Verify delete_job requires job_id."""
-    tool = next(t for t in SCHEDULER_TOOLS if t["name"] == "scheduler.delete_job")
+    tool = next(t for t in SCHEDULER_TOOLS if t["name"] == "scheduler_delete_job")
     schema = tool["inputSchema"]
     assert "job_id" in schema["properties"]
     assert schema["required"] == ["job_id"]
@@ -58,17 +58,17 @@ def test_delete_job_schema():
 
 def test_is_scheduler_tool():
     """Test scheduler tool detection."""
-    assert is_scheduler_tool("scheduler.create_job") is True
-    assert is_scheduler_tool("scheduler.list_jobs") is True
-    assert is_scheduler_tool("scheduler.delete_job") is True
+    assert is_scheduler_tool("scheduler_create_job") is True
+    assert is_scheduler_tool("scheduler_list_jobs") is True
+    assert is_scheduler_tool("scheduler_delete_job") is True
     assert is_scheduler_tool("get_current_time") is False
     assert is_scheduler_tool("filesystem.read") is False
-    assert is_scheduler_tool("scheduler") is False  # no dot suffix
+    assert is_scheduler_tool("scheduler") is False  # no underscore suffix
 
 
 def test_list_jobs_schema():
     """Verify list_jobs has no required properties."""
-    tool = next(t for t in SCHEDULER_TOOLS if t["name"] == "scheduler.list_jobs")
+    tool = next(t for t in SCHEDULER_TOOLS if t["name"] == "scheduler_list_jobs")
     schema = tool["inputSchema"]
     assert "required" not in schema
 
@@ -123,7 +123,7 @@ def test_scheduler_request_json_for_create():
 
         task = asyncio.create_task(inject_response())
         result = await bridge._execute_scheduler_tool(
-            ws, "scheduler.create_job",
+            ws, "scheduler_create_job",
             {"message": "テスト", "delay_seconds": 300},
             "tg:12345", "telegram", {},
         )
@@ -171,7 +171,7 @@ def test_scheduler_request_json_for_cron():
 
         task = asyncio.create_task(inject_response())
         result = await bridge._execute_scheduler_tool(
-            ws, "scheduler.create_job",
+            ws, "scheduler_create_job",
             {"message": "天気予報", "cron": "0 9 * * *"},
             "tg:99999", "telegram", {},
         )
@@ -208,7 +208,7 @@ def test_scheduler_request_json_for_delete():
 
         task = asyncio.create_task(inject_response())
         result = await bridge._execute_scheduler_tool(
-            ws, "scheduler.delete_job",
+            ws, "scheduler_delete_job",
             {"job_id": "del12345"},
             "tg:12345", "telegram", {},
         )
@@ -249,7 +249,7 @@ def test_scheduler_request_json_for_list():
 
         task = asyncio.create_task(inject_response())
         result = await bridge._execute_scheduler_tool(
-            ws, "scheduler.list_jobs", {},
+            ws, "scheduler_list_jobs", {},
             "tg:12345", "telegram", {},
         )
         await task
