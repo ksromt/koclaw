@@ -36,6 +36,21 @@ logs/
 
 # Runtime data
 chat_history/
+data/
+workspace/
+
+# Persona (personal character settings — use persona.yaml.example as template)
+persona.yaml
+
+# Documentation (internal reference only)
+docs/
+
+# Claude Code workspace instructions
+CLAUDE.md
+.claude/
+
+# Windows artifacts
+nul
 
 # Build artifacts
 *.exe

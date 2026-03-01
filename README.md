@@ -1,480 +1,283 @@
-# Koclaw
+<p align="center">
+  <h1 align="center">Koclaw</h1>
+  <p align="center">安全的跨平台 AI Agent 框架 / セキュアなクロスプラットフォームAIエージェント / Secure Cross-Platform AI Agent Framework</p>
+</p>
 
-**Secure, Cross-Platform AI Agent Framework**
-
-Koclaw is a production-oriented AI Agent framework that bridges conversational AI with real-world messaging platforms through a memory-safe Rust gateway, a flexible Python agent layer, and end-to-end encryption. It provides a unified identity for an AI persona ("Kokoron") across Telegram, QQ, Discord, a desktop companion with Live2D avatar, and embeddable web widgets.
-
----
-
-## Table of Contents
-
-- [Vision](#vision)
-- [Key Features](#key-features)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Supported Channels](#supported-channels)
-- [Supported LLM Providers](#supported-llm-providers)
-- [Security](#security)
-- [Comparison with Claw Ecosystem](#comparison-with-claw-ecosystem)
-- [Development](#development)
-- [Roadmap](#roadmap)
-- [License](#license)
+<p align="center">
+  <a href="#中文">中文</a> · <a href="#日本語">日本語</a> · <a href="#english">English</a>
+</p>
 
 ---
 
-## Vision
+# 中文
 
-Modern AI assistants are fragmented across platforms -- each with its own integration, its own identity, its own security model. Koclaw unifies them:
+## 这是什么
 
-- **One persona, many channels.** A single AI agent (Kokoron) accessible on Telegram, QQ, Discord, desktop, and the web, with consistent personality and memory.
-- **Security by design.** End-to-end encryption ensures that even a compromised server cannot read user messages. Permission levels enforce what the agent can do based on where it is invoked.
-- **Extensibility without modification.** Adding a new channel, LLM provider, or tool requires implementing a trait and registering it in config -- no existing code needs to change.
-- **Multimodal pipeline.** Text, voice, vision, and document understanding flow through the same framework, powered by the best available models.
+Koclaw 是一个面向个人部署的 AI Agent 框架。它的核心理念很简单：**一个 AI 角色，多个平台，统一记忆，端到端加密**。
 
----
+你可以在 Telegram、QQ、Discord 上跟同一个 AI 助手对话，也可以通过桌面客户端的 Live2D 形象跟它面对面互动。不管从哪个渠道发消息，它都知道你是谁，记得之前聊过什么，并且保持一致的人格特征。更重要的是，即使服务器被入侵，攻击者也无法读取你的消息——因为所有对话都经过端到端加密。
 
-## Key Features
+项目名来自 **Ko**koron + **claw** —— Kokoron 是默认内置的 AI 角色，claw 表示它属于 AI Agent 生态的一部分。
 
-- **Rust Gateway** -- Memory-safe message routing, authentication, rate limiting, and sandbox enforcement. Zero-cost abstractions for high-throughput message handling.
-- **Python Agent Layer** -- LLM orchestration, tool execution, RAG retrieval, and voice pipeline (ASR/TTS), built on patterns from AIKokoron.
-- **End-to-End Encryption** -- X25519 key exchange with ChaCha20-Poly1305 session encryption. User private keys never leave the user device.
-- **Multi-Channel SNS Integration** -- Telegram, QQ, and Discord with a trait-based architecture that makes adding channels trivial.
-- **Desktop Companion** -- Electron/React application with Live2D avatar for an embodied conversational experience.
-- **Web Embedding SDK** -- `@koclaw/web-widget` npm package for dropping Kokoron into any website (e.g., shinBlog).
-- **Permission-Based Security** -- Three-tier permission model (Public, Authenticated, Admin) tied to channel origin.
-- **Config-Driven Architecture** -- TOML configuration with environment variable support. No code changes needed to enable/disable channels or switch providers.
-- **Encrypted Memory** -- Conversation history and user memories encrypted at rest using per-user derived keys.
-- **Sandboxed Tool Execution** -- Filesystem scope, command allowlists, and permission guards prevent agent misuse.
+## 设计出发点
 
----
+市面上已经有不少优秀的开源项目在做类似的事情：
 
-## Architecture
+- **[Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber)** 做了非常棒的本地 LLM + Live2D VTuber 体验，支持语音打断和完全离线运行。但它主要面向桌面端单人使用，没有多平台 SNS 集成。
+- **[OpenClaw](https://github.com/openclaw/openclaw)** 是功能最全面的个人 AI 助手框架之一，支持 WhatsApp/Telegram/Slack 等二十多个频道，生态非常丰富。但它是纯 TypeScript 实现，没有端到端加密，也没有 Live2D 角色化体验。
+- **[ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw)** 把 Agent 运行时做到了极致轻量（3.4MB + 10ms 冷启动），纯 Rust 实现，非常适合边缘部署。但它专注于运行时基础设施，不包含 LLM 编排、语音管线等上层功能。
 
-```
-                    +--------------------------------------------+
-                    |              User Devices                   |
-                    |                                             |
-                    |  +----------+ +--------+ +--------------+  |
-                    |  | Desktop  | | Mobile | | Web Browser  |  |
-                    |  | (Live2D) | | (SNS)  | | (Blog Chat)  |  |
-                    |  +----+-----+ +---+----+ +------+-------+  |
-                    +-------|-----------|--------------|---------+
-                            |           |              |
-                    +-------v-----------v--------------v---------+
-                    |         E2E Encrypted Transport             |
-                    |    (X25519 + ChaCha20-Poly1305)             |
-                    +-----------------------+---------------------+
-                                            |
-+-------------------------------------------v-----------------------------------------+
-|                        Koclaw Gateway (Rust)                                         |
-|                                                                                      |
-|  +-------------+  +--------------+  +-------------+  +---------------+               |
-|  |  Channels   |  | Auth/Crypto  |  |   Router    |  |   Sandbox     |               |
-|  |             |  |              |  |             |  |               |               |
-|  |  Telegram   |  | E2E Encrypt  |  | Message     |  | Filesystem    |               |
-|  |  QQ         |  | Key Mgmt     |  | Routing     |  | Command       |               |
-|  |  Discord    |  | Session      |  | Rate Limit  |  | Allowlist     |               |
-|  |  WebSocket  |  | Permissions  |  | Queue       |  | Permission    |               |
-|  |  Web SDK    |  |              |  |             |  | Levels        |               |
-|  +------+------+  +--------------+  +------+------+  +---------------+               |
-|         |                                  |                                          |
-|         +----------------------------------+                                          |
-|                         |                                                             |
-|  +----------------------v------------------------------------------------------+     |
-|  |                 Agent Bridge (WebSocket / Protocol Buffers)                  |     |
-|  |              Gateway <-> Python Agent communication                         |     |
-|  +----------------------+------------------------------------------------------+     |
-+--------------------------|---------------------------------------------------------+
-                           |
-+--------------------------v---------------------------------------------------------+
-|                     Koclaw Agent (Python / FastAPI)                                  |
-|                                                                                      |
-|  +--------------+  +--------------+  +--------------+  +-------------+               |
-|  | LLM Router   |  | Memory       |  | Tool Engine  |  | Voice       |               |
-|  |              |  |              |  | (MCP+)       |  | Pipeline    |               |
-|  | Claude       |  | Short-term   |  |              |  |             |               |
-|  | OpenAI       |  | Long-term    |  | Shell        |  | ASR         |               |
-|  | DeepSeek     |  | Encrypted    |  | Search       |  | TTS         |               |
-|  | Ollama       |  | RAG Index    |  | File Ops     |  | VAD         |               |
-|  +--------------+  +--------------+  +--------------+  +-------------+               |
-|                                                                                      |
-|  +--------------------------------------------------------------------------+       |
-|  |                    Persona System (Kokoron)                               |       |
-|  |  Identity / Personality / Per-channel behavior adaptation                 |       |
-|  +--------------------------------------------------------------------------+       |
-+--------------------------------------------------------------------------------------+
-```
+Koclaw 试图在这些项目之间找到自己的位置：
 
-### Workspace Structure
+| | Open-LLM-VTuber | OpenClaw | ZeroClaw | **Koclaw** |
+|---|---|---|---|---|
+| 核心语言 | Python | TypeScript | Rust | **Rust + Python** |
+| 端到端加密 | — | — | — | **X25519 + ChaCha20** |
+| Live2D 角色 | 桌面端 | — | — | **多平台 (桌面/Web)** |
+| SNS 集成 | — | 20+ 频道 | 频道插件 | **Telegram/QQ/Discord/Web** |
+| 语音管线 | ASR + TTS | TTS | — | **ASR + TTS (GPT-SoVITS)** |
+| 本地 LLM | 全面支持 | 部分支持 | 支持 | **支持 (Ollama)** |
+| 内存安全 | 运行时 | 运行时 | 编译期 | **编译期 (Gateway)** |
+| 定时任务 | — | Cron 服务 | — | **Cron + 一次性提醒** |
+| MCP 工具 | 支持 | — | 支持 | **支持 (27+ 工具)** |
 
-```
-koclaw/
-|-- gateway/          # [Rust] Core gateway binary -- routing, auth, encryption, sandbox
-|-- agent/            # [Python] Agent logic -- LLM, TTS/ASR, MCP tools, RAG, memory
-|-- channels/         # [Rust] Channel implementations (Telegram, QQ, Discord)
-|-- common/           # [Rust] Shared types, traits, error types, crypto primitives
-|-- sdk/              # [TypeScript] Web embedding SDK (@koclaw/web-widget)
-|-- desktop/          # [Electron/React] Desktop app with Live2D (from AIKokoron)
-|-- tests/            # Integration and end-to-end tests
-|-- docs/             # Project documentation
-|   |-- plans/        # Implementation plans (YYYY-MM-DD-feature-name.md)
-|   |-- architecture/ # Architecture decision records and design docs
-|   |-- api/          # API documentation for external integrations
-|   |-- integration/  # Integration guides (shinBlog, external projects)
-|   |-- security/     # Security design documents
-|   `-- channels/     # Per-channel setup and configuration guides
-`-- scripts/          # Build, deploy, and utility scripts
-```
+简单说，Koclaw 的核心优势是：**Rust 保证安全性 + Python 接入 ML 生态 + 端到端加密 + Live2D 角色化 + 跨平台统一身份**。
 
----
+## 目前实现了什么
 
-## Tech Stack
+项目目前完成了 5 个开发阶段：
 
-| Component       | Technology                        | Rationale                                           |
-|-----------------|-----------------------------------|-----------------------------------------------------|
-| Gateway         | Rust (tokio, axum)                | Memory safety, zero-cost abstractions, performance  |
-| Agent           | Python (FastAPI, uvicorn)         | ML ecosystem access, existing AIKokoron codebase    |
-| Desktop         | Electron + React                  | Existing AIKokoron frontend, Live2D SDK support     |
-| Web SDK         | TypeScript (React)                | npm distribution for blog/web integration           |
-| IPC Protocol    | WebSocket + JSON (Protocol Buffers planned) | Efficient bridge between Gateway and Agent |
-| Database        | SQLite (embedded) / PostgreSQL    | Flexibility for single-user and multi-user deploys  |
-| Encryption      | X25519 + ChaCha20-Poly1305       | Modern AEAD, used by WireGuard and Signal           |
-| Key Derivation  | HKDF-SHA256                       | Standards-compliant key derivation                  |
-| Serialization   | serde + serde_json, TOML          | Rust ecosystem standard, human-readable config      |
-| HTTP Client     | reqwest (rustls-tls)              | Async HTTP with pure-Rust TLS                       |
-| Logging         | tracing + tracing-subscriber      | Structured, async-aware logging with filtering      |
-| Error Handling  | thiserror + anyhow                | Typed errors for libraries, flexible errors for app |
+- **Phase 1-2**: Rust Gateway 核心、Telegram/QQ/Discord 频道、X25519 密钥交换、加密存储、权限系统、沙箱
+- **Phase 3**: 对接 [AIKokoron](https://github.com/shinyo-io/AIKokoron) 的 Agent 逻辑、统一人设系统 (`persona.yaml`)、对话记忆、表情系统、GPT-SoVITS 语音合成、Whisper 语音识别、WebSocket 频道、Live2D 资源服务
+- **Phase 4**: MCP 工具系统（27 个工具）、ClawHub 技能生态对接、权限分级的工具访问控制
+- **Phase 5**: 定时提醒器、Cron 定时任务、心跳检测系统、主动消息推送
 
----
+> **关于 AIKokoron**: Koclaw 的 Python Agent 层大量复用了 [AIKokoron](https://github.com/shinyo-io/AIKokoron) 的代码。AIKokoron 是一个正在开发中的独立项目，实现了 LLM 编排、语音管线、Live2D 前端等功能。目前尚未公开发布，但其核心能力已经集成到 Koclaw 中。
 
-## Quick Start
+**测试覆盖**: 124 个测试（66 Rust + 58 Python），全部通过。
 
-### Prerequisites
+## 技术栈
 
-| Requirement     | Minimum Version | Installation                              |
-|-----------------|-----------------|-------------------------------------------|
-| Rust            | 1.85+ (2024 edition) | `rustup default stable`              |
-| Python          | 3.10+           | https://python.org or system package      |
-| uv (Python)     | 0.5+            | `pip install uv` or https://docs.astral.sh/uv |
-| Node.js         | 20+ (for SDK)   | https://nodejs.org                        |
-| Git             | 2.x             | https://git-scm.com                       |
+- **Gateway**: Rust (tokio, axum, chacha20poly1305, x25519-dalek)
+- **Agent**: Python (websockets, openai/anthropic SDK, MCP, loguru)
+- **支持的 LLM**: Claude / GPT-4o / DeepSeek / Ollama (本地)
+- **语音**: GPT-SoVITS (TTS) + Faster-Whisper (ASR)
+- **桌面**: Electron + React + Live2D Cubism SDK
+- **配置**: TOML + 环境变量，无需改代码即可切换频道和模型
 
-### Clone and Build
+## 快速开始
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/koclaw.git
-cd koclaw
+git clone https://github.com/ArcadiaFrame/koclaw.git && cd koclaw
 
-# Build the Rust gateway
+# 编译 Gateway
 cargo build --release
 
-# Set up the Python agent
-cd agent
-uv sync
-cd ..
-```
+# 安装 Agent 依赖
+cd agent && uv sync && cd ..
 
-### Configure
-
-```bash
-# Copy the example configuration
+# 配置
 cp config.example.toml config.toml
+cp persona.yaml.example persona.yaml
+# 编辑 config.toml 和 .env 设置 API Key 和 Bot Token
 
-# Edit config.toml with your settings (channels, tokens, etc.)
-# Or set environment variables:
-export TELEGRAM_BOT_TOKEN="your-telegram-bot-token"
-export ANTHROPIC_API_KEY="your-anthropic-api-key"
+# 启动
+cd agent && uv run python -m koclaw_agent &  # Agent
+cargo run --release                            # Gateway
 ```
 
-### Run
+详细部署指南见项目内 `docs/deployment-linux.md`。
+
+## 未来计划
+
+- Web 嵌入 SDK (`@koclaw/web-widget`) — 一行代码在任意网站嵌入 AI 聊天
+- 真正的零知识端到端加密 — Gateway 只做中转，完全无法解密
+- RAG 知识库集成
+- 多 Agent 协作
+- Double Ratchet 前向保密
+
+## 许可证
+
+MIT License
+
+---
+
+# 日本語
+
+## 概要
+
+Koclaw は個人向けの AI エージェントフレームワークです。基本的な考え方はシンプルで、**一つの AI キャラクター、複数のプラットフォーム、統一された記憶、エンドツーエンド暗号化**。
+
+Telegram、QQ、Discord で同じ AI アシスタントと会話でき、デスクトップでは Live2D アバターを通じて対面のようなやり取りもできます。どのチャンネルからメッセージを送っても、誰なのかを認識し、以前の会話を覚えており、一貫した性格を保ちます。さらに重要なのは、サーバーが侵害されても攻撃者はメッセージを読めないということ——すべてのやり取りはエンドツーエンドで暗号化されているからです。
+
+プロジェクト名は **Ko**koron + **claw** から。Kokoron はデフォルトの AI キャラクター、claw は AI エージェントエコシステムの一部であることを示しています。
+
+## 設計の背景
+
+この分野には既に優れたオープンソースプロジェクトがあります：
+
+- **[Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber)** — ローカル LLM + Live2D VTuber の素晴らしい体験を実現。音声割り込みや完全オフライン動作をサポート。ただし主にデスクトップ向けで、SNS マルチチャンネル連携はありません。
+- **[OpenClaw](https://github.com/openclaw/openclaw)** — 20 以上のチャンネルをサポートする最も包括的な個人 AI アシスタント。TypeScript 実装でエコシステムが豊富。ただし E2E 暗号化や Live2D キャラクター体験はありません。
+- **[ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw)** — エージェントランタイムを極限まで軽量化（3.4MB、コールドスタート 10ms）。純 Rust 実装でエッジデプロイに最適。ただしランタイム基盤に特化しており、LLM オーケストレーションや音声パイプラインは含みません。
+
+Koclaw はこれらのプロジェクトの間で独自のポジションを目指しています：
+
+| | Open-LLM-VTuber | OpenClaw | ZeroClaw | **Koclaw** |
+|---|---|---|---|---|
+| コア言語 | Python | TypeScript | Rust | **Rust + Python** |
+| E2E 暗号化 | — | — | — | **X25519 + ChaCha20** |
+| Live2D キャラクター | デスクトップ | — | — | **マルチプラットフォーム** |
+| SNS 連携 | — | 20+ チャンネル | チャンネルプラグイン | **Telegram/QQ/Discord/Web** |
+| 音声パイプライン | ASR + TTS | TTS | — | **ASR + TTS (GPT-SoVITS)** |
+| メモリ安全性 | ランタイム | ランタイム | コンパイル時 | **コンパイル時 (Gateway)** |
+| MCP ツール | サポート | — | サポート | **サポート (27+ ツール)** |
+
+Koclaw の強みは：**Rust によるセキュリティ + Python の ML エコシステム + E2E 暗号化 + Live2D キャラクター + クロスプラットフォーム統一アイデンティティ**。
+
+## 実装状況
+
+5 つの開発フェーズが完了しています：
+
+- **Phase 1-2**: Gateway コア、チャンネル実装（Telegram/QQ/Discord）、X25519 鍵交換、暗号化ストレージ、権限システム、サンドボックス
+- **Phase 3**: [AIKokoron](https://github.com/shinyo-io/AIKokoron) の Agent ロジック統合、統一ペルソナ (`persona.yaml`)、会話メモリ、表情システム、GPT-SoVITS 音声合成、Whisper 音声認識、WebSocket チャンネル
+- **Phase 4**: MCP ツールシステム（27 ツール）、ClawHub スキルエコシステム対応、権限ベースのツールアクセス制御
+- **Phase 5**: リマインダー、Cron スケジューラー、ハートビート監視、プロアクティブメッセージ配信
+
+> **AIKokoron について**: Koclaw の Python Agent レイヤーは [AIKokoron](https://github.com/shinyo-io/AIKokoron) のコードを多く再利用しています。AIKokoron は現在開発中の独立プロジェクトで、LLM オーケストレーション、音声パイプライン、Live2D フロントエンドなどを実装しています。まだ公開リリースはされていませんが、コア機能は Koclaw に統合済みです。
+
+**テストカバレッジ**: 124 テスト（Rust 66 + Python 58）、全パス。
+
+## 技術スタック
+
+- **Gateway**: Rust (tokio, axum, chacha20poly1305, x25519-dalek)
+- **Agent**: Python (websockets, openai/anthropic SDK, MCP, loguru)
+- **対応 LLM**: Claude / GPT-4o / DeepSeek / Ollama（ローカル）
+- **音声**: GPT-SoVITS (TTS) + Faster-Whisper (ASR)
+- **デスクトップ**: Electron + React + Live2D Cubism SDK
+- **設定**: TOML + 環境変数。コード変更なしでチャンネルやモデルを切り替え可能
+
+## クイックスタート
 
 ```bash
-# Start the Python Agent (in one terminal)
-cd agent && uv run python -m koclaw_agent
+git clone https://github.com/ArcadiaFrame/koclaw.git && cd koclaw
 
-# Start the Rust Gateway (in another terminal)
-cargo run --release
-
-# Or use Docker Compose for the full stack:
-docker compose up --build
-```
-
----
-
-## Configuration
-
-Koclaw uses a TOML configuration file (`config.toml`) with environment variable overrides. See `config.example.toml` for a fully annotated template.
-
-### Gateway Settings
-
-```toml
-[gateway]
-host = "127.0.0.1"       # Bind address
-port = 18789              # Gateway port
-agent_url = "ws://127.0.0.1:18790"  # Python Agent WebSocket URL
-log_level = "info"        # trace, debug, info, warn, error
-```
-
-### Channel Configuration
-
-```toml
-[channels.telegram]
-enabled = true
-token_env = "TELEGRAM_BOT_TOKEN"   # Prefer env vars over inline tokens
-mode = "polling"                    # "polling" (dev) or "webhook" (prod)
-# webhook_url = "https://your-domain.com/webhook/telegram"
-allowed_users = [7858557183]               # Empty = allow all users
-
-[channels.qq]
-enabled = false
-app_id_env = "QQ_BOT_APP_ID"
-secret_env = "QQ_BOT_SECRET"
-sandbox = true                      # Use sandbox mode for development
-
-[channels.discord]
-enabled = false
-token_env = "DISCORD_BOT_TOKEN"
-```
-
-### Environment Variables
-
-```
-# Required
-KOCLAW_ENCRYPTION_KEY=           # Master encryption key (auto-generated on first run)
-KOCLAW_AGENT_URL=                # Agent WebSocket URL (default: ws://127.0.0.1:18790)
-
-# LLM Providers (at least one required)
-ANTHROPIC_API_KEY=               # Claude API key
-OPENAI_API_KEY=                  # OpenAI API key
-DEEPSEEK_API_KEY=                # DeepSeek API key
-
-# Channels (configure as needed)
-TELEGRAM_BOT_TOKEN=              # From @BotFather
-QQ_BOT_APP_ID=                   # From q.qq.com developer portal
-QQ_BOT_SECRET=                   # From q.qq.com developer portal
-DISCORD_BOT_TOKEN=               # From Discord Developer Portal
-
-# Optional
-KOCLAW_LOG_LEVEL=info            # Logging verbosity
-KOCLAW_SANDBOX_ROOT=./workspace  # Agent sandbox root directory
-```
-
----
-
-## Supported Channels
-
-| Channel     | Protocol                | Status         | Permission Level | Notes                                     |
-|-------------|-------------------------|----------------|------------------|--------------------------------------------|
-| Telegram    | Bot API (polling/webhook)| ✅ Implemented | Authenticated   | Text, voice, images, files, inline keyboards |
-| QQ          | Official Bot API (WS+REST)| ✅ Implemented | Authenticated   | Guild messages, DMs, rich cards             |
-| Discord     | Bot API (gateway WS)   | ✅ Implemented  | Authenticated   | Text, voice channels, slash commands        |
-| WebSocket   | Raw WebSocket (port 18791)| ✅ Implemented | Authenticated   | Desktop/Web companion connection            |
-| Web Public  | REST + SSE              | Planned        | Public           | Blog widget chat (shinBlog integration)     |
-
-### Permission Levels
-
-| Level           | Channels                              | Capabilities                                              |
-|-----------------|---------------------------------------|-----------------------------------------------------------|
-| `Public`        | Blog widget, public web endpoints     | Chat only, no tools, no private data, rate limited        |
-| `Authenticated` | Telegram, QQ, Discord private chat    | Full tools, memory access, file access within sandbox     |
-| `Admin`         | Desktop app, designated admin users   | Unrestricted, configuration changes, system management    |
-
----
-
-## Supported LLM Providers
-
-| Provider     | Streaming | Vision  | Tool Use | Status         |
-|--------------|-----------|---------|----------|----------------|
-| Claude (Anthropic) | Yes  | Yes     | Yes      | ✅ Implemented |
-| OpenAI (GPT) | Yes      | Yes     | Yes      | ✅ Implemented |
-| DeepSeek     | Yes       | Yes     | Yes      | ✅ Implemented |
-| Ollama (Local) | Yes    | Model-dependent | Model-dependent | ✅ Implemented |
-
-Provider selection is config-driven. The Agent routes requests to the appropriate provider based on configuration and optionally per-channel overrides.
-
----
-
-## Security
-
-Koclaw takes a defense-in-depth approach to security:
-
-### End-to-End Encryption
-
-- **Key Exchange:** X25519 Elliptic Curve Diffie-Hellman for session establishment.
-- **Session Encryption:** ChaCha20-Poly1305 AEAD for all message payloads.
-- **Key Derivation:** HKDF-SHA256 with domain-separated context strings.
-- **Nonce Management:** Unique nonces per message prevent replay attacks.
-- **Phase 1 (current):** Server-mediated E2E -- protects against network eavesdropping. Gateway decrypts to forward to Agent.
-- **Phase 2 (planned):** True zero-knowledge E2E -- Gateway acts as a pure relay, cannot decrypt messages.
-
-### Memory Safety
-
-The Gateway is written entirely in Rust, eliminating buffer overflows, use-after-free, and data races at compile time. All security-critical paths (encryption, authentication, permission enforcement) are in Rust.
-
-### Sandboxed Execution
-
-- Agent tool execution is confined to a designated workspace directory.
-- Command execution uses an allowlist -- only pre-approved commands can run.
-- File operations are scoped to the sandbox root.
-- Destructive actions (file deletion, message sending) require explicit confirmation.
-
-### Credential Protection
-
-- Bot tokens and API keys are encrypted at rest using ChaCha20-Poly1305.
-- A master key is generated on first run and stored with restrictive file permissions.
-- Environment variables are preferred over inline configuration for secrets.
-- Secrets are never logged, even at trace level.
-
-### Permission Enforcement
-
-Every incoming message carries a permission level derived from its channel of origin. The Router enforces these permissions before forwarding to the Agent, and filters Agent responses to strip unauthorized content (e.g., tool execution results from Public channels).
-
-For the full security design, see [docs/security/encryption-design.md](docs/security/encryption-design.md).
-
----
-
-## Comparison with Claw Ecosystem
-
-Koclaw was designed to address specific gaps in the existing Claw ecosystem (OpenClaw, PicoClaw, ZeroClaw):
-
-| Feature                      | OpenClaw       | PicoClaw       | ZeroClaw       | **Koclaw**           |
-|------------------------------|----------------|----------------|----------------|----------------------|
-| Language                     | Python         | Python         | Python         | **Rust + Python**    |
-| E2E Encryption               | No             | No             | No             | **Yes (X25519 + ChaCha20)** |
-| Memory Safety                | Runtime        | Runtime        | Runtime        | **Compile-time (Rust)** |
-| Live2D Avatar                | No             | No             | No             | **Yes (Kokoron)**    |
-| Unified Cross-Platform Identity | Limited     | No             | No             | **Yes**              |
-| Multi-Channel SNS            | Partial        | Minimal        | No             | **Telegram, QQ, Discord, Web** |
-| Multimodal Pipeline          | Text           | Text           | Text           | **Text + Voice + Vision** |
-| Permission Levels            | Basic          | None           | None           | **Three-tier (Public/Auth/Admin)** |
-| Web Embedding SDK            | No             | No             | No             | **@koclaw/web-widget** |
-| Sandbox Enforcement          | Basic          | No             | No             | **Filesystem + command allowlist** |
-| Encrypted Memory             | No             | No             | No             | **Yes (per-user keys)** |
-| Config-Driven Architecture   | Partial        | No             | No             | **Full TOML + env vars** |
-
-### When to Choose Koclaw
-
-- You need E2E encryption for user privacy.
-- You want a single AI persona across multiple messaging platforms.
-- You need an embodied AI experience (Live2D avatar on desktop and web).
-- You require compile-time memory safety for security-critical infrastructure.
-- You want to embed an AI chat widget in an existing website.
-- You need fine-grained permission control based on access context.
-
----
-
-## Development
-
-### Building from Source
-
-```bash
-# Compile in debug mode (faster builds, slower runtime)
-cargo build
-
-# Compile in release mode (optimized, stripped binary)
+# Gateway をビルド
 cargo build --release
 
-# Run clippy linter
-cargo clippy -- -W clippy::all
+# Agent 依存関係をインストール
+cd agent && uv sync && cd ..
 
-# Run tests
-cargo test
+# 設定
+cp config.example.toml config.toml
+cp persona.yaml.example persona.yaml
+# config.toml と .env を編集して API Key と Bot Token を設定
 
-# Format code
-cargo fmt
+# 起動
+cd agent && uv run python -m koclaw_agent &  # Agent
+cargo run --release                            # Gateway
 ```
 
-### Running Tests
+詳細なデプロイガイドはプロジェクト内の `docs/deployment-linux.md` を参照してください。
 
-```bash
-# Run all Rust tests
-cargo test
+## 今後の予定
 
-# Run tests for a specific crate
-cargo test -p koclaw-common
-cargo test -p koclaw-gateway
-cargo test -p koclaw-channels
+- Web 埋め込み SDK (`@koclaw/web-widget`) — 任意のサイトに AI チャットを一行で埋め込み
+- 真のゼロ知識 E2E 暗号化 — Gateway は純粋なリレーとして機能
+- RAG ナレッジベース統合
+- マルチエージェント協調
+- Double Ratchet 前方秘匿性
 
-# Run Python agent tests
-cd agent && uv run pytest
-```
+## ライセンス
 
-### Project Conventions
-
-- **Commit format:** `type(scope): description` (e.g., `feat(channel-tg): add voice message support`)
-- **Types:** feat, fix, refactor, docs, test, chore, security
-- **Scopes:** gateway, agent, channel-tg, channel-qq, channel-dc, sdk, common, docs
-- **Code style:** `cargo fmt` for Rust, `ruff` for Python, `prettier` for TypeScript
-- **Error handling:** `Result<T, E>` everywhere in Rust, typed exceptions in Python
-
-For the full development guide, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+MIT License
 
 ---
+
+# English
+
+## What is this
+
+Koclaw is an AI Agent framework designed for personal deployment. The idea is straightforward: **one AI persona, multiple platforms, unified memory, end-to-end encryption**.
+
+You can talk to the same AI assistant on Telegram, QQ, and Discord, or interact with it face-to-face through a Live2D avatar on your desktop. No matter which channel you use, it knows who you are, remembers what you talked about, and maintains a consistent personality. And even if the server gets compromised, your messages stay private — everything is end-to-end encrypted.
+
+The name comes from **Ko**koron + **claw** — Kokoron is the default AI persona, and claw places it within the broader AI agent ecosystem.
+
+## Why another framework
+
+There are already several great open-source projects in this space:
+
+- **[Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber)** delivers an excellent local LLM + Live2D VTuber experience with voice interruption and fully offline operation. But it's primarily desktop-focused and doesn't integrate with messaging platforms.
+- **[OpenClaw](https://github.com/openclaw/openclaw)** is one of the most comprehensive personal AI assistant frameworks, supporting 20+ channels with a rich ecosystem. But it's pure TypeScript with no end-to-end encryption or Live2D character experience.
+- **[ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw)** pushes the agent runtime to extreme lightness (3.4MB binary, 10ms cold start) in pure Rust. But it focuses on runtime infrastructure and doesn't include LLM orchestration or voice pipelines.
+
+Koclaw occupies a different niche:
+
+| | Open-LLM-VTuber | OpenClaw | ZeroClaw | **Koclaw** |
+|---|---|---|---|---|
+| Core language | Python | TypeScript | Rust | **Rust + Python** |
+| E2E encryption | — | — | — | **X25519 + ChaCha20** |
+| Live2D character | Desktop | — | — | **Multi-platform** |
+| SNS integration | — | 20+ channels | Channel plugins | **Telegram/QQ/Discord/Web** |
+| Voice pipeline | ASR + TTS | TTS | — | **ASR + TTS (GPT-SoVITS)** |
+| Memory safety | Runtime | Runtime | Compile-time | **Compile-time (Gateway)** |
+| MCP tools | Supported | — | Supported | **Supported (27+ tools)** |
+
+In short, Koclaw's core proposition: **Rust for security + Python for ML ecosystem + end-to-end encryption + Live2D character embodiment + unified cross-platform identity**.
+
+## Current status
+
+Five development phases are complete:
+
+- **Phase 1-2**: Gateway core, channel implementations (Telegram/QQ/Discord), X25519 key exchange, encrypted storage, permission system, sandbox
+- **Phase 3**: Integration with [AIKokoron](https://github.com/shinyo-io/AIKokoron) agent logic, unified persona system (`persona.yaml`), conversation memory, expression system, GPT-SoVITS TTS, Whisper ASR, WebSocket channel
+- **Phase 4**: MCP tool system (27 tools), ClawHub skill ecosystem integration, permission-gated tool access
+- **Phase 5**: Reminders, cron scheduler, heartbeat monitoring, proactive message delivery
+
+> **About AIKokoron**: Koclaw's Python Agent layer reuses significant code from [AIKokoron](https://github.com/shinyo-io/AIKokoron). AIKokoron is an independent project under active development that implements LLM orchestration, voice pipelines, and a Live2D frontend. It hasn't been publicly released yet, but its core capabilities are already integrated into Koclaw.
+
+**Test coverage**: 124 tests (66 Rust + 58 Python), all passing.
+
+## Tech stack
+
+- **Gateway**: Rust (tokio, axum, chacha20poly1305, x25519-dalek)
+- **Agent**: Python (websockets, openai/anthropic SDK, MCP, loguru)
+- **Supported LLMs**: Claude / GPT-4o / DeepSeek / Ollama (local)
+- **Voice**: GPT-SoVITS (TTS) + Faster-Whisper (ASR)
+- **Desktop**: Electron + React + Live2D Cubism SDK
+- **Config**: TOML + env vars — switch channels and models without code changes
+
+## Quick start
+
+```bash
+git clone https://github.com/ArcadiaFrame/koclaw.git && cd koclaw
+
+# Build the Gateway
+cargo build --release
+
+# Install Agent dependencies
+cd agent && uv sync && cd ..
+
+# Configure
+cp config.example.toml config.toml
+cp persona.yaml.example persona.yaml
+# Edit config.toml and .env to set API keys and bot tokens
+
+# Run
+cd agent && uv run python -m koclaw_agent &  # Agent
+cargo run --release                            # Gateway
+```
+
+See `docs/deployment-linux.md` for detailed deployment instructions.
 
 ## Roadmap
 
-### Phase 1 -- Gateway Core + Channels (Current)
-
-- [x] Rust workspace with common, gateway, and channels crates
-- [x] Core trait definitions (Channel, MessageRouter, PermissionLevel) with dyn-compatible BoxFuture pattern
-- [x] IncomingMessage / OutgoingMessage data model
-- [x] Configuration system (TOML + env vars with secret resolution)
-- [x] Gateway-to-Agent WebSocket bridge (session-based response multiplexing)
-- [x] Telegram channel implementation (polling mode with text/voice/image)
-- [x] QQ channel implementation (WebSocket gateway + REST API)
-- [x] Permission enforcement in Router (Public/Authenticated/Admin)
-- [x] Python Agent stub with LLM routing (Claude, OpenAI, DeepSeek, Ollama)
-- [x] Basic encryption at rest (ChaCha20-Poly1305 for credentials and session data)
-- [x] Docker Compose deployment (Gateway + Agent)
-- [ ] End-to-end integration tests
-
-### Phase 2 -- Security, Discord, Memory & Persona ✅
-
-- [x] X25519 key exchange with HKDF-SHA256 session key derivation (4 tests)
-- [x] Discord channel implementation (WebSocket Gateway + REST API)
-- [x] Encrypted memory system with SQLite + ChaCha20-Poly1305 (7 tests)
-- [x] Persona system with per-channel identity management (4 tests)
-- [x] Tool sandbox with path validation and command allowlist (6 tests)
-- [x] Persona + Sandbox wired into Agent Bridge protocol
-
-### Phase 3 -- AIKokoron Integration ✅
-
-- [x] Unified persona YAML (`persona.yaml`) — single config for Rust and Python
-- [x] Conversation memory system (FileMemory with JSON per session, 7 tests)
-- [x] Expression extraction for Live2D animation (`[joy]`, `[anger]`, etc., 7 tests)
-- [x] GPT-SoVITS TTS (HTTP client to external server)
-- [x] Faster-Whisper ASR (local speech-to-text with lazy loading)
-- [x] WebSocket channel for Desktop/Web clients (port 18791)
-- [x] Extended bridge protocol (audio data + expressions in response chunks)
-- [x] Static file server for Live2D models (axum, port 18792)
-- [x] Frontend adapter config (`desktop/koclaw-config.json`)
-- [x] Integration tests (14 Python tests: expression + memory)
-
-### Phase 4 -- Web SDK, Desktop Polish, and Advanced Features (Next)
-
-- [ ] Web SDK (`@koclaw/web-widget`) for shinBlog integration (API spec ready)
-- [ ] Live2D avatar embedding for web
-- [ ] RAG knowledge base integration
-- [ ] Desktop companion application full integration (Electron + Live2D)
-- [ ] True zero-knowledge E2E encryption (Agent-held keys)
-- [ ] Multi-agent orchestration
-- [ ] Workflow visualization dashboard
-- [ ] Double Ratchet forward secrecy
-
----
+- Web embedding SDK (`@koclaw/web-widget`) — drop AI chat into any website with one line
+- True zero-knowledge E2E encryption — Gateway as a pure relay
+- RAG knowledge base integration
+- Multi-agent orchestration
+- Double Ratchet forward secrecy
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
----
-
-## Related Projects
-
-| Project    | Relationship                                                              |
-|------------|---------------------------------------------------------------------------|
-| AIKokoron  | Source of Agent logic, TTS/ASR pipeline, Live2D frontend                  |
-| shinBlog   | External consumer of Koclaw SDK (web widget + chat API integration)       |
+MIT License
