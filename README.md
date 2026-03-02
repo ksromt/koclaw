@@ -1,7 +1,9 @@
 <p align="center">
-  <h1 align="center">Koclaw</h1>
-  <p align="center">安全的跨平台 AI Agent 框架 / セキュアなクロスプラットフォームAIエージェント / Secure Cross-Platform AI Agent Framework</p>
+  <img src="assets/kokoron.png" alt="Kokoron" width="160">
 </p>
+
+<h1 align="center">Koclaw</h1>
+<p align="center">安全的跨平台 AI Agent 框架 / セキュアなクロスプラットフォームAIエージェント / Secure Cross-Platform AI Agent Framework</p>
 
 <p align="center">
   <a href="#中文">中文</a> · <a href="#日本語">日本語</a> · <a href="#english">English</a>
