@@ -71,7 +71,9 @@ SCHEDULER_TOOLS: list[dict] = [
         "name": "scheduler_delete_job",
         "description": (
             "Cancel/delete a scheduled job by its ID. "
-            "Use when the user wants to cancel a reminder or recurring job."
+            "Use when the user wants to cancel a reminder or recurring job. "
+            "If the user also requests a replacement or new reminder in the "
+            "same message, call scheduler_create_job immediately after this."
         ),
         "inputSchema": {
             "type": "object",

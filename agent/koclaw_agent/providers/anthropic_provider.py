@@ -30,7 +30,19 @@ class AnthropicProvider(BaseProvider):
 
         if history:
             for msg in history:
-                messages.append({"role": msg["role"], "content": msg["content"]})
+                role = msg["role"]
+                if role == "tool":
+                    # Convert OpenAI-style tool result to user message
+                    tool_name = msg.get("tool_name", "tool")
+                    messages.append({
+                        "role": "user",
+                        "content": f"[Tool Result: {tool_name}]\n{msg.get('content', '')}",
+                    })
+                elif role == "assistant" and "tool_calls" in msg:
+                    # Skip assistant tool-call entries (no text to show)
+                    continue
+                else:
+                    messages.append({"role": role, "content": msg.get("content", "")})
 
         if attachments:
             content = []

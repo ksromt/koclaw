@@ -382,12 +382,33 @@ class AgentBridge:
                 logger.info(f"Tool result: {tool_result[:200]}")
 
             # Feed tool result back as next iteration's input
-            if iteration_response:
-                history.append({"role": "assistant", "content": iteration_response})
-            history.append({
-                "role": "user",
-                "content": f"[Tool Result: {tool_name}]\n{tool_result}",
-            })
+            if tool_call_request is not None and tool_call_request.call_id:
+                # Native FC: use proper OpenAI tool protocol so the model
+                # sees a coherent tool-call chain and can continue calling.
+                history.append({
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": tool_call_request.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": json.dumps(tool_args),
+                        },
+                    }],
+                })
+                history.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_request.call_id,
+                    "content": tool_result,
+                })
+            else:
+                # Prompt-based fallback: plain text
+                if iteration_response:
+                    history.append({"role": "assistant", "content": iteration_response})
+                history.append({
+                    "role": "user",
+                    "content": f"[Tool Result: {tool_name}]\n{tool_result}",
+                })
             current_text = f"[Tool Result: {tool_name}]\n{tool_result}"
             current_attachments = []  # No attachments on tool result iterations
 

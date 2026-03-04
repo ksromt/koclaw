@@ -11,6 +11,7 @@ class ToolCallRequest:
 
     name: str
     arguments: dict = field(default_factory=dict)
+    call_id: str = ""
 
 
 @dataclass

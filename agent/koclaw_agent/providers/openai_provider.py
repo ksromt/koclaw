@@ -64,7 +64,22 @@ class OpenAIProvider(BaseProvider):
 
         if history:
             for msg in history:
-                messages.append({"role": msg["role"], "content": msg["content"]})
+                role = msg["role"]
+                if role == "tool":
+                    # Native tool result: pass with tool_call_id
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": msg.get("tool_call_id", ""),
+                        "content": msg.get("content", ""),
+                    })
+                elif role == "assistant" and "tool_calls" in msg:
+                    # Assistant message that made a tool call
+                    messages.append({
+                        "role": "assistant",
+                        "tool_calls": msg["tool_calls"],
+                    })
+                else:
+                    messages.append({"role": role, "content": msg.get("content", "")})
 
         if attachments:
             content = []
@@ -113,6 +128,7 @@ class OpenAIProvider(BaseProvider):
                     tool_call=ToolCallRequest(
                         name=tool_call.function.name,
                         arguments=arguments,
+                        call_id=tool_call.id or "",
                     )
                 )
             elif message.content:
