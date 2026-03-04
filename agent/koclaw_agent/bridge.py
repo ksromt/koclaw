@@ -233,9 +233,12 @@ class AgentBridge:
         channel = message.get("channel", "telegram")
         system_prompt = message.get("system_prompt") or self.persona.system_prompt(channel)
 
-        learnings = await self.self_improving.load_learnings()
-        if learnings:
-            system_prompt += "\n" + learnings
+        try:
+            learnings = await self.self_improving.load_learnings()
+            if learnings:
+                system_prompt += "\n" + learnings
+        except Exception as e:
+            logger.warning(f"Failed to load learnings: {e}")
 
         logger.info(
             f"Chat request: session={session_id}, "
@@ -356,23 +359,26 @@ class AgentBridge:
                     logger.error(
                         f"MCP tool execution failed: {tool_name}: {e}"
                     )
-                    err_entry = LearningEntry(
-                        entry_type="ERR",
-                        priority="medium",
-                        area="mcp",
-                        source="agent-runtime",
-                        summary=f"MCP tool '{tool_name}' failed: {str(e)[:100]}",
-                        details="",
-                        action="",
-                        pattern_key=f"mcp-fail-{tool_name}",
-                        permission=permission,
-                    )
-                    err_id = await self.self_improving.log_learning(err_entry)
-                    if err_id:
-                        await self.self_improving.auto_promote(err_entry, err_id)
                     tool_result = (
                         f"Error: Tool '{tool_name}' execution failed: {e}"
                     )
+                    try:
+                        err_entry = LearningEntry(
+                            entry_type="ERR",
+                            priority="medium",
+                            area="mcp",
+                            source="agent-runtime",
+                            summary=f"MCP tool '{tool_name}' failed: {str(e)[:100]}",
+                            details="",
+                            action="",
+                            pattern_key=f"mcp-fail-{tool_name}",
+                            permission=permission,
+                        )
+                        err_id = await self.self_improving.log_learning(err_entry)
+                        if err_id:
+                            await self.self_improving.auto_promote(err_entry, err_id)
+                    except Exception as si_err:
+                        logger.warning(f"Failed to log tool error: {si_err}")
                 logger.info(f"Tool result: {tool_result[:200]}")
 
             # Feed tool result back as next iteration's input
@@ -389,21 +395,24 @@ class AgentBridge:
         if full_response:
             await self.memory.add_message(session_id, "assistant", full_response)
 
-        if text and full_response and permission != "Public":
-            if self.self_improving.detect_correction(text, ""):
-                entry = LearningEntry(
-                    entry_type="FBK",
-                    priority="medium",
-                    area="agent",
-                    source="user-feedback",
-                    summary=f"User correction: {text[:150]}",
-                    details=f"Bot said: {full_response[:200]}",
-                    action="",
-                    permission=permission,
-                )
-                entry_id = await self.self_improving.log_learning(entry)
-                if entry_id:
-                    await self.self_improving.auto_promote(entry, entry_id)
+        try:
+            if text and full_response and permission != "Public":
+                if self.self_improving.detect_correction(text, full_response):
+                    entry = LearningEntry(
+                        entry_type="FBK",
+                        priority="medium",
+                        area="agent",
+                        source="user-feedback",
+                        summary=f"User correction: {text[:150]}",
+                        details=f"Bot said: {full_response[:200]}",
+                        action="",
+                        permission=permission,
+                    )
+                    entry_id = await self.self_improving.log_learning(entry)
+                    if entry_id:
+                        await self.self_improving.auto_promote(entry, entry_id)
+        except Exception as e:
+            logger.warning(f"Self-improving correction detection failed: {e}")
 
         # Extract expressions for Live2D animation
         expr_result = extract_expressions(full_response)
@@ -594,9 +603,12 @@ class AgentBridge:
             message.get("system_prompt") or self.persona.system_prompt(channel)
         )
 
-        learnings = await self.self_improving.load_learnings()
-        if learnings:
-            system_prompt += "\n" + learnings
+        try:
+            learnings = await self.self_improving.load_learnings()
+            if learnings:
+                system_prompt += "\n" + learnings
+        except Exception as e:
+            logger.warning(f"Failed to load learnings: {e}")
 
         # Add environment context
         env_context = self._build_env_context()
