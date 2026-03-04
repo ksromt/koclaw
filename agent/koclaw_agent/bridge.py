@@ -23,6 +23,7 @@ from .mcp_host.tool_prompt import build_tool_prompt, parse_tool_call
 from .memory import FileMemory
 from .persona import Persona
 from .scheduler_tools import SCHEDULER_TOOLS, is_scheduler_tool
+from .self_improving import SelfImproving, LearningEntry
 
 
 # Common UTC offset → IANA timezone mapping (covers most users)
@@ -72,6 +73,7 @@ class AgentBridge:
         self.llm_router = LLMRouter(provider_configs)
         self.memory = FileMemory()
         self.persona = Persona.from_yaml_file()
+        self.self_improving = SelfImproving()
         self.tts = self._init_tts()
         self.asr = self._init_asr()
 
@@ -231,6 +233,10 @@ class AgentBridge:
         channel = message.get("channel", "telegram")
         system_prompt = message.get("system_prompt") or self.persona.system_prompt(channel)
 
+        learnings = await self.self_improving.load_learnings()
+        if learnings:
+            system_prompt += "\n" + learnings
+
         logger.info(
             f"Chat request: session={session_id}, "
             f"channel={channel}, permission={permission}"
@@ -350,6 +356,20 @@ class AgentBridge:
                     logger.error(
                         f"MCP tool execution failed: {tool_name}: {e}"
                     )
+                    err_entry = LearningEntry(
+                        entry_type="ERR",
+                        priority="medium",
+                        area="mcp",
+                        source="agent-runtime",
+                        summary=f"MCP tool '{tool_name}' failed: {str(e)[:100]}",
+                        details="",
+                        action="",
+                        pattern_key=f"mcp-fail-{tool_name}",
+                        permission=permission,
+                    )
+                    err_id = await self.self_improving.log_learning(err_entry)
+                    if err_id:
+                        await self.self_improving.auto_promote(err_entry, err_id)
                     tool_result = (
                         f"Error: Tool '{tool_name}' execution failed: {e}"
                     )
@@ -368,6 +388,22 @@ class AgentBridge:
         # Persist the assistant response
         if full_response:
             await self.memory.add_message(session_id, "assistant", full_response)
+
+        if text and full_response and permission != "Public":
+            if self.self_improving.detect_correction(text, ""):
+                entry = LearningEntry(
+                    entry_type="FBK",
+                    priority="medium",
+                    area="agent",
+                    source="user-feedback",
+                    summary=f"User correction: {text[:150]}",
+                    details=f"Bot said: {full_response[:200]}",
+                    action="",
+                    permission=permission,
+                )
+                entry_id = await self.self_improving.log_learning(entry)
+                if entry_id:
+                    await self.self_improving.auto_promote(entry, entry_id)
 
         # Extract expressions for Live2D animation
         expr_result = extract_expressions(full_response)
@@ -557,6 +593,10 @@ class AgentBridge:
         system_prompt = (
             message.get("system_prompt") or self.persona.system_prompt(channel)
         )
+
+        learnings = await self.self_improving.load_learnings()
+        if learnings:
+            system_prompt += "\n" + learnings
 
         # Add environment context
         env_context = self._build_env_context()
