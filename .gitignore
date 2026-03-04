@@ -45,6 +45,9 @@ persona.yaml
 # Documentation (internal reference only)
 docs/
 
+# Self-improving agent runtime data (auto-promoted, not manually curated)
+agent/knowledge/.agent-learnings-local.md
+
 # Claude Code workspace instructions
 CLAUDE.md
 .claude/
