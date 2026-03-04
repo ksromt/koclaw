@@ -106,6 +106,9 @@ impl SchedulerJob {
     ///   `last_fired_at` or `created_at`.
     /// - `Cron`: parses the 5-field expression, converts to the crate's 7-field
     ///   format, and computes the next occurrence in the given timezone.
+    ///   Uses `created_at` as the anchor for never-fired jobs so the first
+    ///   occurrence is reachable (using `now()` would create a race where
+    ///   `next > now` is always true).
     pub fn next_fire_time(&self) -> Option<u64> {
         match &self.schedule {
             JobSchedule::At { timestamp_ms } => {
@@ -124,7 +127,12 @@ impl SchedulerJob {
             JobSchedule::Cron {
                 expression,
                 timezone,
-            } => cron_next_fire(expression, timezone, self.last_fired_at),
+            } => cron_next_fire(
+                expression,
+                timezone,
+                self.last_fired_at,
+                self.created_at,
+            ),
         }
     }
 
@@ -137,10 +145,19 @@ impl SchedulerJob {
     }
 }
 
-/// Parse a 5-field cron expression and compute the next occurrence after "now"
-/// in the given IANA timezone.  Returns Unix milliseconds, or `None` on parse
-/// failure / no upcoming occurrence.
-fn cron_next_fire(expression: &str, timezone: &str, last_fired_at: Option<u64>) -> Option<u64> {
+/// Parse a 5-field cron expression and compute the next occurrence.
+/// Returns Unix milliseconds, or `None` on parse failure / no upcoming
+/// occurrence.
+///
+/// `anchor_ms` is used as the "after" point when `last_fired_at` is `None`
+/// (i.e., the job has never fired).  Typically this is the job's `created_at`
+/// timestamp so the very first cron match after creation is reachable.
+fn cron_next_fire(
+    expression: &str,
+    timezone: &str,
+    last_fired_at: Option<u64>,
+    anchor_ms: u64,
+) -> Option<u64> {
     // The `cron` crate expects 7 fields: sec min hour dom month dow year.
     // Users provide 5 fields:       min hour dom month dow.
     // Prepend "0" (seconds) and append "*" (year).
@@ -149,15 +166,10 @@ fn cron_next_fire(expression: &str, timezone: &str, last_fired_at: Option<u64>) 
     let schedule = Schedule::from_str(&seven_field).ok()?;
     let tz: Tz = timezone.parse().ok()?;
 
-    // Determine the "after" point: either last_fired_at or current wall-clock.
-    let after = match last_fired_at {
-        Some(ms) => {
-            let secs = (ms / 1000) as i64;
-            let nanos = ((ms % 1000) * 1_000_000) as u32;
-            tz.timestamp_opt(secs, nanos).single()?
-        }
-        None => chrono::Utc::now().with_timezone(&tz),
-    };
+    let reference_ms = last_fired_at.unwrap_or(anchor_ms);
+    let secs = (reference_ms / 1000) as i64;
+    let nanos = ((reference_ms % 1000) * 1_000_000) as u32;
+    let after = tz.timestamp_opt(secs, nanos).single()?;
 
     let next = schedule.after(&after).next()?;
     u64::try_from(next.timestamp_millis()).ok()
@@ -296,6 +308,43 @@ mod tests {
 
         // 2023-11-16 00:00:00 UTC = 1_700_092_800_000 ms
         assert_eq!(next, 1_700_092_800_000);
+    }
+
+    #[test]
+    fn test_cron_first_fire_uses_created_at() {
+        // Regression: when last_fired_at is None, the cron anchor must be
+        // created_at (not now()), so the first matching time after creation is
+        // reachable by is_due().
+        //
+        // created_at = 1_700_000_000_000 ms = 2023-11-15 07:13 JST
+        // cron = "0 22 * * *" = daily at 22:00 JST
+        // Expected next_fire = 2023-11-15 22:00 JST = 2023-11-15 13:00 UTC
+        //                    = 1_700_053_200_000 ms
+        let job = SchedulerJob {
+            created_at: 1_700_000_000_000,
+            last_fired_at: None,
+            ..make_job(JobSchedule::Cron {
+                expression: "0 22 * * *".into(),
+                timezone: "Asia/Tokyo".into(),
+            })
+        };
+
+        let next = job.next_fire_time().expect("should compute next fire time");
+        assert_eq!(next, 1_700_053_200_000); // 2023-11-15 22:00 JST
+
+        // Simulate wall-clock after 22:00 JST: is_due should be true.
+        let after_fire_time = 1_700_053_200_000 + 60_000; // 1 minute past
+        assert!(
+            job.is_due(after_fire_time),
+            "job should be due once wall-clock passes next_fire_time"
+        );
+
+        // Before 22:00 JST: is_due should be false.
+        let before_fire_time = 1_700_053_200_000 - 60_000; // 1 minute before
+        assert!(
+            !job.is_due(before_fire_time),
+            "job should NOT be due before next_fire_time"
+        );
     }
 
     #[test]

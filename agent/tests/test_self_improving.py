@@ -141,14 +141,12 @@ class TestLogLearning:
         assert counter3 == counter2 + 1
 
     @pytest.mark.asyncio
-    async def test_log_creates_directory(
-        self, si: SelfImproving, sample_learning: LearningEntry, learnings_dir: Path
+    async def test_init_creates_directories(
+        self, si: SelfImproving, learnings_dir: Path, knowledge_dir: Path
     ):
-        """log_learning should auto-create the learnings directory."""
-        # Directory shouldn't exist yet (fixture doesn't create it)
-        assert not learnings_dir.exists()
-        await si.log_learning(sample_learning)
+        """__init__ should eagerly create learnings and knowledge directories."""
         assert learnings_dir.exists()
+        assert knowledge_dir.exists()
 
     @pytest.mark.asyncio
     async def test_log_content_includes_fields(

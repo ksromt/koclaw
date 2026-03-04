@@ -134,10 +134,14 @@ class SelfImproving:
     def __init__(
         self,
         learnings_dir: str = "workspace/learnings",
-        knowledge_dir: str = "workspace/knowledge",
+        knowledge_dir: str = "knowledge",
     ) -> None:
         self._learnings_dir = Path(learnings_dir)
         self._knowledge_dir = Path(knowledge_dir)
+
+        # Ensure directories exist so file writes never silently fail
+        self._learnings_dir.mkdir(parents=True, exist_ok=True)
+        self._knowledge_dir.mkdir(parents=True, exist_ok=True)
 
         # Per-file asyncio locks for concurrent write safety
         self._locks: dict[str, asyncio.Lock] = {}
