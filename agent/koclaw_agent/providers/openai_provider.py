@@ -66,7 +66,19 @@ class OpenAIProvider(BaseProvider):
             for msg in history:
                 messages.append({"role": msg["role"], "content": msg["content"]})
 
-        messages.append({"role": "user", "content": text})
+        if attachments:
+            content = []
+            if text:
+                content.append({"type": "text", "text": text})
+            for att in attachments:
+                if att.get("attachment_type") == "Image":
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {"url": att["url"]},
+                    })
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": text})
 
         # Build API kwargs
         kwargs: dict = {

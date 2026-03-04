@@ -32,7 +32,20 @@ class AnthropicProvider(BaseProvider):
             for msg in history:
                 messages.append({"role": msg["role"], "content": msg["content"]})
 
-        messages.append({"role": "user", "content": text})
+        if attachments:
+            content = []
+            for att in attachments:
+                if att.get("attachment_type") == "Image":
+                    content.append({
+                        "type": "image",
+                        "source": {"type": "url", "url": att["url"]},
+                    })
+            if text:
+                content.append({"type": "text", "text": text})
+            messages.append({"role": "user", "content": content})
+        else:
+            messages.append({"role": "user", "content": text})
+
 
         async with self.client.messages.stream(
             model=self.model,
