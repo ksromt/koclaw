@@ -162,8 +162,8 @@ impl MessageRouter for Router {
             if let Some(ref name) = message.display_name {
                 if name == "shin" {
                     system_prompt.push_str(
-                        "\n\n現在あなたが話している相手はshin先生本人です。\
-                         「先生」と直接呼んでください。「shin先生」ではなく「先生」です。"
+                        "\n\n【システム認証通知】この相手はshin先生本人です（認証済み）。\
+                         「先生」と直接呼んでください。"
                     );
                 }
             }
