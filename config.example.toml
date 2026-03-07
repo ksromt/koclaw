@@ -57,3 +57,9 @@ base_url = "https://api.deepseek.com/v1"
 [providers.ollama]
 base_url = "http://localhost:11434"
 model = "llama3"
+
+# Long-term memory (ChromaDB + sentence-transformers)
+[memory]
+chromadb_path = "./data/chromadb"
+embedding_model = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+finetune_candidates_path = "./data/finetune_candidates"

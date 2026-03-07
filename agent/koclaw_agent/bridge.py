@@ -21,9 +21,16 @@ from .mcp_host.server_manager import McpServerManager
 from .mcp_host.tool_permissions import ToolPermissionChecker
 from .mcp_host.tool_prompt import build_tool_prompt, parse_tool_call
 from .memory import FileMemory
+from .memory_tools import MEMORY_TOOLS, is_memory_tool
 from .persona import Persona
 from .scheduler_tools import SCHEDULER_TOOLS, is_scheduler_tool
 from .self_improving import SelfImproving, LearningEntry
+
+try:
+    from .memory.rag_memory import RagMemory
+    _HAS_RAG = True
+except ImportError:
+    _HAS_RAG = False
 
 
 # Common UTC offset → IANA timezone mapping (covers most users)
@@ -67,6 +74,7 @@ class AgentBridge:
         port: int = 18790,
         provider_configs: dict | None = None,
         mcp_configs: dict | None = None,
+        memory_config: dict | None = None,
     ):
         self.host = host
         self.port = port
@@ -76,6 +84,7 @@ class AgentBridge:
         self.self_improving = SelfImproving()
         self.tts = self._init_tts()
         self.asr = self._init_asr()
+        self.rag_memory = self._init_rag_memory(memory_config or {})
 
         # MCP tool server management
         self.mcp_manager = McpServerManager()
@@ -148,6 +157,27 @@ class AgentBridge:
             except ImportError:
                 logger.warning("faster-whisper not installed, ASR disabled")
         return None
+
+    @staticmethod
+    def _init_rag_memory(memory_config: dict):
+        """Initialize ChromaDB-backed long-term memory, if available."""
+        if not _HAS_RAG:
+            logger.info("RagMemory disabled: chromadb/sentence-transformers not installed")
+            return None
+        try:
+            return RagMemory(
+                db_path=memory_config.get("chromadb_path", "./data/chromadb"),
+                embedding_model=memory_config.get(
+                    "embedding_model",
+                    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                ),
+                finetune_candidates_path=memory_config.get(
+                    "finetune_candidates_path", "./data/finetune_candidates"
+                ),
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize RagMemory: {e}")
+            return None
 
     async def handle_connection(self, websocket: websockets.WebSocketServerProtocol):
         """Handle a single Gateway connection.
@@ -267,9 +297,32 @@ class AgentBridge:
                 f"configs_loaded={bool(self.mcp_manager.configs)}"
             )
 
-        # Add scheduler pseudo-tools for Authenticated+ users
+        # Add pseudo-tools for Authenticated+ users
         if permission != "Public":
             mcp_tools = mcp_tools + SCHEDULER_TOOLS
+            if self.rag_memory:
+                mcp_tools = mcp_tools + MEMORY_TOOLS
+
+        # Auto-inject related long-term memories (RAG)
+        rag_context = ""
+        if self.rag_memory and text:
+            try:
+                rag_results = await self.rag_memory.search(
+                    query=text,
+                    limit=5,
+                    min_importance=2,
+                )
+                if rag_results:
+                    lines = ["", "【関連する記憶】"]
+                    for r in rag_results:
+                        stars = "*" * r["importance"]
+                        lines.append(
+                            f"- [{r['category']}/{stars}] "
+                            f"{r['content']} ({r['timestamp'][:10]})"
+                        )
+                    rag_context = "\n".join(lines) + "\n"
+            except Exception as e:
+                logger.warning(f"RAG search failed: {e}")
 
         # Add user environment context
         env_context = self._build_env_context()
@@ -283,7 +336,7 @@ class AgentBridge:
             tool_prompt = ""
             tools_for_api = mcp_tools if mcp_tools else None
 
-        full_system = system_prompt + env_context + tool_prompt
+        full_system = system_prompt + rag_context + env_context + tool_prompt
 
         # LLM generation with tool execution loop (max 3 iterations)
         full_response = ""
@@ -371,13 +424,19 @@ class AgentBridge:
                 full_response += deny_msg
                 break
 
-            # Execute tool: scheduler pseudo-tools are intercepted, others go to MCP
+            # Execute tool: pseudo-tools are intercepted, others go to MCP
             if is_scheduler_tool(tool_name):
                 logger.info(f"Executing scheduler tool: {tool_name}({tool_args})")
                 tool_result = await self._execute_scheduler_tool(
                     websocket, tool_name, tool_args, session_id, channel, message
                 )
                 logger.info(f"Scheduler tool result: {tool_result[:200]}")
+            elif is_memory_tool(tool_name):
+                logger.info(f"Executing memory tool: {tool_name}({tool_args})")
+                tool_result = await self._execute_memory_tool(
+                    tool_name, tool_args
+                )
+                logger.info(f"Memory tool result: {tool_result[:200]}")
             else:
                 logger.info(f"Executing MCP tool: {tool_name}({tool_args})")
                 try:
@@ -487,6 +546,97 @@ class AgentBridge:
                 }))
             except Exception as e:
                 logger.error(f"TTS synthesis failed: {e}")
+
+    async def _execute_memory_tool(self, tool_name: str, tool_args: dict) -> str:
+        """Execute a memory pseudo-tool against the local RagMemory."""
+        if not self.rag_memory:
+            return "Error: Long-term memory is not available."
+
+        action = tool_name.removeprefix("memory_")
+        try:
+            if action == "save":
+                mem_id = await self.rag_memory.save(
+                    content=tool_args["content"],
+                    importance=tool_args.get("importance", 3),
+                    category=tool_args.get("category", "conversation"),
+                    tags=tool_args.get("tags"),
+                )
+                return f"記憶を保存しました (ID: {mem_id})"
+
+            elif action == "search":
+                results = await self.rag_memory.search(
+                    query=tool_args["query"],
+                    limit=tool_args.get("limit", 5),
+                    min_importance=tool_args.get("min_importance", 1),
+                    category=tool_args.get("category"),
+                )
+                if not results:
+                    return "関連する記憶が見つかりませんでした。"
+                lines = []
+                for r in results:
+                    stars = "*" * r["importance"]
+                    lines.append(
+                        f"- [{r['id']}] {stars} {r['content']} "
+                        f"({r['category']}, {r['timestamp'][:10]})"
+                    )
+                return "検索結果:\n" + "\n".join(lines)
+
+            elif action == "classify":
+                ok = await self.rag_memory.classify(
+                    memory_id=tool_args["memory_id"],
+                    importance=tool_args.get("importance"),
+                    category=tool_args.get("category"),
+                    tags=tool_args.get("tags"),
+                )
+                return "記憶を更新しました。" if ok else "記憶IDが見つかりません。"
+
+            elif action == "forget":
+                ok = await self.rag_memory.forget(
+                    memory_id=tool_args["memory_id"],
+                    reason=tool_args.get("reason", ""),
+                )
+                return "記憶をアーカイブしました。" if ok else "記憶IDが見つかりません。"
+
+            elif action == "promote":
+                result = await self.rag_memory.promote(
+                    memory_id=tool_args["memory_id"],
+                    reason=tool_args.get("reason", ""),
+                )
+                if "error" in result:
+                    return f"記憶IDが見つかりません: {result['error']}"
+                return (
+                    f"魂の記憶候補にマークしました。"
+                    f"次回の微調整でモデルに刻まれます。(ID: {result['id']})"
+                )
+
+            elif action == "reflect":
+                results = await self.rag_memory.reflect(
+                    limit=tool_args.get("limit", 20),
+                )
+                if not results:
+                    return "記憶がまだありません。"
+                lines = []
+                for r in results:
+                    stars = "*" * r["importance"]
+                    lines.append(f"- [{r['id']}] {stars} {r['content']}")
+                return f"最近の記憶 ({len(results)}件):\n" + "\n".join(lines)
+
+            elif action == "stats":
+                s = await self.rag_memory.stats()
+                return (
+                    f"記憶統計: 総数={s['total']}, "
+                    f"アーカイブ={s['archived']}, "
+                    f"カテゴリ別={s['by_category']}, "
+                    f"重要度別={s['by_importance']}, "
+                    f"最新={s['latest_timestamp']}"
+                )
+
+            else:
+                return f"Error: Unknown memory action: {action}"
+
+        except Exception as e:
+            logger.error(f"Memory tool error: {e}")
+            return f"Error: {e}"
 
     async def _execute_scheduler_tool(
         self,
