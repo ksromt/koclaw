@@ -23,15 +23,18 @@ def build_tool_prompt(tools: list[dict]) -> str:
     for tool in tools:
         name = tool["name"]
         desc = tool.get("description", "")
-        # Truncate long descriptions
         short_desc = desc.split(".")[0] if desc else ""
         schema = tool.get("inputSchema", {})
-        required = schema.get("required", [])
-        if required:
-            params = ", ".join(required)
-            lines.append(f"- {name}({params}): {short_desc}")
-        else:
-            lines.append(f"- {name}: {short_desc}")
+        props = schema.get("properties", {})
+        required = set(schema.get("required", []))
+
+        lines.append(f"- {name}: {short_desc}")
+        for pname, pinfo in props.items():
+            ptype = pinfo.get("type", "")
+            pdesc = pinfo.get("description", "")
+            pdesc = pdesc.split(".")[0] if pdesc else ""
+            req_mark = " *必須*" if pname in required else ""
+            lines.append(f"    {pname} ({ptype}{req_mark}): {pdesc}")
 
     lines.append("")
     return "\n".join(lines)

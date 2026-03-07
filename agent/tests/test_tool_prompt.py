@@ -6,12 +6,28 @@ from koclaw_agent.providers.openai_provider import _strip_internal_tags
 def test_build_tool_prompt_single_tool():
     tools = [{"name": "get_time", "description": "Get the current time.",
               "inputSchema": {"type": "object",
-                              "properties": {"timezone": {"type": "string"}},
+                              "properties": {"timezone": {"type": "string",
+                                                          "description": "IANA timezone."}},
                               "required": ["timezone"]},
               "_mcp_server": "time"}]
     prompt = build_tool_prompt(tools)
-    assert "get_time(timezone)" in prompt
-    assert "Get the current time" in prompt
+    assert "- get_time: Get the current time" in prompt
+    assert "timezone (string *必須*): IANA timezone" in prompt
+
+
+def test_build_tool_prompt_optional_params():
+    tools = [{"name": "scheduler_create_job", "description": "Create a reminder.",
+              "inputSchema": {"type": "object",
+                              "properties": {
+                                  "message": {"type": "string", "description": "What to remind."},
+                                  "delay_seconds": {"type": "integer", "description": "Delay in seconds."},
+                                  "cron": {"type": "string", "description": "Cron expression."},
+                              },
+                              "required": ["message"]}}]
+    prompt = build_tool_prompt(tools)
+    assert "message (string *必須*)" in prompt
+    assert "delay_seconds (integer):" in prompt
+    assert "cron (string):" in prompt
 
 
 def test_build_tool_prompt_empty():
