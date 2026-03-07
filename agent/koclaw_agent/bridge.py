@@ -628,23 +628,19 @@ class AgentBridge:
                 logger.warning(f"Failed to read HEARTBEAT.md: {e}")
 
             prompt = (
-                f"[HEARTBEAT CHECK]\n"
-                f"You are performing a scheduled heartbeat check-in.\n"
+                f"[定期チェック]\n"
+                f"定期ハートビートチェックを実行中。\n"
                 f"{heartbeat_content}\n"
-                f"If nothing needs attention, respond with exactly: HEARTBEAT_OK\n"
-                f"If something needs the user's attention, "
-                f"compose a brief notification."
+                f"特に問題がなければ、正確に「HEARTBEAT_OK」とだけ返答。\n"
+                f"先生に伝えるべきことがあれば、簡潔な通知を作成。"
             )
         else:
             # Reminder or recurring job trigger
             prompt = (
-                f"[SCHEDULED REMINDER]\n"
-                f"A scheduled reminder has fired. "
-                f"The user asked to be reminded about:\n"
-                f'"{job_message}"\n\n'
-                f"Compose a friendly, contextual reminder message for the user. "
-                f"Be natural and helpful, as if you just remembered "
-                f"something important."
+                f"[リマインダー発火]\n"
+                f"先生が設定したリマインダーが発火しました。\n"
+                f"内容：「{job_message}」\n\n"
+                f"先生に自然で親しみのあるリマインダーメッセージを送ってください。"
             )
 
         # Use the system prompt from the trigger's channel
