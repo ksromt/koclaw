@@ -273,7 +273,17 @@ class AgentBridge:
 
         # Add user environment context
         env_context = self._build_env_context()
-        full_system = system_prompt + env_context
+
+        # Decide tool passing strategy: native FC or prompt-based
+        use_native_tools = self.llm_router.supports_native_tools()
+        if mcp_tools and not use_native_tools:
+            tool_prompt = build_tool_prompt(mcp_tools)
+            tools_for_api = None
+        else:
+            tool_prompt = ""
+            tools_for_api = mcp_tools if mcp_tools else None
+
+        full_system = system_prompt + env_context + tool_prompt
 
         # LLM generation with tool execution loop (max 3 iterations)
         full_response = ""
@@ -291,7 +301,7 @@ class AgentBridge:
                 attachments=current_attachments,
                 system_prompt=full_system,
                 history=history,
-                tools=mcp_tools if mcp_tools else None,
+                tools=tools_for_api,
             ):
                 # Handle native function calling (GenerateChunk with tool_call)
                 if hasattr(chunk, "tool_call") and chunk.tool_call is not None:

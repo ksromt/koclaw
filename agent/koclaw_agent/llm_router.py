@@ -77,6 +77,7 @@ class LLMRouter:
                     base_url=kokoron_cfg["base_url"],
                     extra_body={"chat_template_kwargs": {"enable_thinking": True}},
                     defaults={"temperature": 0.9, "top_p": 0.9, "presence_penalty": 0.5},
+                    supports_tools=False,
                 )
                 logger.info("Kokoron provider initialized (local fine-tuned model)")
             except ImportError:
@@ -84,6 +85,12 @@ class LLMRouter:
 
         if not self._providers:
             logger.warning("No LLM providers configured. Using echo mode.")
+
+    def supports_native_tools(self, provider: str | None = None) -> bool:
+        """Check if the active provider supports native function calling."""
+        name = provider or self.default_provider
+        p = self._providers.get(name)
+        return getattr(p, "supports_tools", True)
 
     async def generate(
         self,

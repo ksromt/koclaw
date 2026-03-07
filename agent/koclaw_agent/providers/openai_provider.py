@@ -15,11 +15,14 @@ from .base import BaseProvider, GenerateChunk, ToolCallRequest
 DEFAULT_MODEL = "gpt-4o"
 
 _THINK_RE = re.compile(r"<think>[\s\S]*?</think>|<think>[\s\S]*$|^[\s\S]*?</think>")
+_TOOLCALL_RE = re.compile(r"<toolcall>[\s\S]*?</toolcall>|<toolcall>[\s\S]*$|<tool_call>[\s\S]*?</tool_call>|<tool_call>[\s\S]*$")
 
 
-def _strip_think_tags(text: str) -> str:
-    """Remove <think>...</think> blocks from text, including unclosed tags."""
-    return _THINK_RE.sub("", text).strip()
+def _strip_internal_tags(text: str) -> str:
+    """Remove <think> and <toolcall> blocks from text, including unclosed tags."""
+    text = _THINK_RE.sub("", text)
+    text = _TOOLCALL_RE.sub("", text)
+    return text.strip()
 
 
 def _mcp_tools_to_openai(tools: list[dict]) -> list[dict]:
@@ -50,13 +53,15 @@ def _mcp_tools_to_openai(tools: list[dict]) -> list[dict]:
 
 class OpenAIProvider(BaseProvider):
     def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None,
-                 extra_body: dict | None = None, defaults: dict | None = None):
+                 extra_body: dict | None = None, defaults: dict | None = None,
+                 supports_tools: bool = True):
         import openai
 
         self.client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model = model or DEFAULT_MODEL
         self.extra_body = extra_body or {}
         self.defaults = defaults or {}
+        self.supports_tools = supports_tools
         logger.info(f"OpenAI provider ready: model={self.model}, base_url={base_url or 'default'}")
 
     async def generate(
@@ -149,7 +154,7 @@ class OpenAIProvider(BaseProvider):
                 )
             elif message.content:
                 # LLM chose to respond with text instead of calling a tool
-                cleaned = _strip_think_tags(message.content)
+                cleaned = _strip_internal_tags(message.content)
                 if cleaned:
                     yield cleaned
         else:
