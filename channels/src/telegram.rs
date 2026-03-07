@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use koclaw_common::channel::{BoxFuture, Channel, ChannelType, MessageRouter};
 use koclaw_common::message::{Attachment, AttachmentType, IncomingMessage, OutgoingMessage};
@@ -312,10 +312,29 @@ impl Channel for TelegramChannel {
                 .await?;
 
             if !resp.ok {
-                anyhow::bail!(
-                    "Telegram sendMessage failed: {}",
-                    resp.description.unwrap_or_default()
-                );
+                let desc = resp.description.unwrap_or_default();
+                // Retry without parse_mode if Telegram can't parse markdown entities
+                if desc.contains("can't parse entities") {
+                    warn!("Telegram markdown parse failed, retrying as plain text");
+                    params.as_object_mut().unwrap().remove("parse_mode");
+                    let retry_resp: TgApiResponse<TgMessage> = self
+                        .client
+                        .post(&url)
+                        .json(&params)
+                        .send()
+                        .await
+                        .context("Failed to send Telegram message (plain text retry)")?
+                        .json()
+                        .await?;
+                    if !retry_resp.ok {
+                        anyhow::bail!(
+                            "Telegram sendMessage failed: {}",
+                            retry_resp.description.unwrap_or_default()
+                        );
+                    }
+                } else {
+                    anyhow::bail!("Telegram sendMessage failed: {}", desc);
+                }
             }
 
             Ok(())
