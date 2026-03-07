@@ -140,6 +140,12 @@ impl TelegramChannel {
         }
 
         let is_admin = self.admin_user.is_some_and(|admin_id| admin_id == user_id);
+        debug!(
+            user_id,
+            admin_user = ?self.admin_user,
+            is_admin,
+            "Admin check"
+        );
 
         // For admin user, set display_name to "shin" so the Router can inject identity context
         let display_name = if is_admin {

@@ -160,7 +160,14 @@ impl MessageRouter for Router {
 
             // Build system prompt with identity context for admin users
             let mut system_prompt = self.persona.system_prompt(message.channel);
+            debug!(
+                permission = ?message.permission,
+                user_id = %message.user_id,
+                channel = ?message.channel,
+                "Identity check"
+            );
             if message.permission == PermissionLevel::Admin {
+                info!("Injecting admin identity context for shin");
                 system_prompt.push_str(
                     "\n\n【システム認証通知】この相手はshin先生本人です（認証済み）。\
                      「先生」と直接呼んでください。"
