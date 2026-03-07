@@ -14,14 +14,37 @@ from .base import BaseProvider, GenerateChunk, ToolCallRequest
 
 DEFAULT_MODEL = "gpt-4o"
 
-_THINK_RE = re.compile(r"<think>[\s\S]*?</think>|<think>[\s\S]*$|^[\s\S]*?</think>")
-_TOOLCALL_RE = re.compile(r"<toolcall>[\s\S]*?</toolcall>|<toolcall>[\s\S]*$|<tool_call>[\s\S]*?</tool_call>|<tool_call>[\s\S]*$")
-
-
 def _strip_internal_tags(text: str) -> str:
-    """Remove <think> and <toolcall> blocks from text, including unclosed tags."""
-    text = _THINK_RE.sub("", text)
-    text = _TOOLCALL_RE.sub("", text)
+    """Remove thinking blocks, tool call blocks, and untagged thinking from LLM output.
+
+    Handles:
+    - Complete <think>...</think> blocks
+    - Unclosed <think> (opening tag without close, or close without open)
+    - Orphaned </think> anywhere in text
+    - Same for <toolcall> / <tool_call> variants
+    - Leading parenthetical thinking: (long analysis text...) at start
+    """
+    # 1. Complete tag blocks (non-greedy)
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text)
+    text = re.sub(r"<tool_?call>[\s\S]*?</tool_?call>", "", text)
+
+    # 2. Unclosed opening tag to end of string
+    text = re.sub(r"<think>[\s\S]*$", "", text)
+    text = re.sub(r"<tool_?call>[\s\S]*$", "", text)
+
+    # 3. Orphaned closing tag: content before it is leaked thinking
+    #    (opening tag was consumed by streaming state machine in a prior chunk)
+    text = re.sub(r"^[\s\S]*?</think>", "", text)
+    text = re.sub(r"^[\s\S]*?</tool_?call>", "", text)
+    # Any further orphaned close tags (shouldn't happen, but just in case)
+    text = text.replace("</think>", "")
+    text = text.replace("</toolcall>", "")
+    text = text.replace("</tool_call>", "")
+
+    # 4. Leading parenthetical thinking blocks: (long analysis...)
+    #    Only strip at start, only if 20+ chars (avoid stripping normal parentheticals)
+    text = re.sub(r"^(\s*\([^)]{20,}\)\s*)+", "", text)
+
     return text.strip()
 
 

@@ -667,7 +667,7 @@ class AgentBridge:
         # Load conversation history for context
         history = await self.memory.get_history(session_id)
 
-        # Generate response via LLM
+        # Generate response via LLM — buffer all chunks for cleaning
         full_response = ""
         async for chunk in self.llm_router.generate(
             text=prompt,
@@ -681,15 +681,17 @@ class AgentBridge:
                 text_content = chunk.text or ""
             if text_content:
                 full_response += text_content
-                await websocket.send(
-                    json.dumps(
-                        {
-                            "type": "text_chunk",
-                            "session_id": session_id,
-                            "content": text_content,
-                        }
-                    )
-                )
+
+        # Clean thinking artifacts before sending
+        from .providers.openai_provider import _strip_internal_tags
+        full_response = _strip_internal_tags(full_response)
+
+        if full_response:
+            await websocket.send(json.dumps({
+                "type": "text_chunk",
+                "session_id": session_id,
+                "content": full_response,
+            }))
 
         # Signal completion
         await websocket.send(
