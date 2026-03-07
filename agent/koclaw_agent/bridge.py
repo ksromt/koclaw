@@ -315,13 +315,14 @@ class AgentBridge:
 
                 if text_content:
                     iteration_response += text_content
-                    await websocket.send(json.dumps({
-                        "type": "text_chunk",
-                        "session_id": session_id,
-                        "content": text_content,
-                    }))
-
-            full_response += iteration_response
+                    # Stream immediately only for native-tool providers;
+                    # non-native providers buffer for cleaning before send
+                    if use_native_tools:
+                        await websocket.send(json.dumps({
+                            "type": "text_chunk",
+                            "session_id": session_id,
+                            "content": text_content,
+                        }))
 
             # Determine tool call: native FC or prompt-based fallback
             tool_name = ""
@@ -332,14 +333,32 @@ class AgentBridge:
                 tool_name = tool_call_request.name
                 tool_args = tool_call_request.arguments
                 logger.info(f"Native tool call: {tool_name}({tool_args})")
-            else:
-                # Prompt-based fallback — parse JSON from text
+            elif not use_native_tools:
+                # Prompt-based fallback — parse JSON from buffered text
+                from .providers.openai_provider import _strip_internal_tags
+                iteration_response = _strip_internal_tags(iteration_response)
+
                 parsed = parse_tool_call(iteration_response)
-                if parsed is None:
-                    break  # No tool call, generation is complete
-                tool_name = parsed.get("tool", "")
-                tool_args = parsed.get("arguments", {})
-                logger.info(f"Prompt-based tool call: {tool_name}({tool_args})")
+                if parsed is not None:
+                    tool_name = parsed.get("tool", "")
+                    tool_args = parsed.get("arguments", {})
+                    logger.info(f"Prompt-based tool call: {tool_name}({tool_args})")
+                else:
+                    # No tool call — send cleaned response to user
+                    if iteration_response:
+                        await websocket.send(json.dumps({
+                            "type": "text_chunk",
+                            "session_id": session_id,
+                            "content": iteration_response,
+                        }))
+                    full_response += iteration_response
+                    break
+            else:
+                # Native provider, no tool call
+                full_response += iteration_response
+                break
+
+            # Tool call detected — don't add raw JSON to full_response
 
             # Permission check before executing
             if not self.tool_checker.is_allowed(tool_name, permission):
