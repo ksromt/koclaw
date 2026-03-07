@@ -241,6 +241,9 @@ impl MessageRouter for Router {
                     full_response = strip_expression_tags(&full_response);
                 }
 
+                // Strip untagged thinking paragraphs (fine-tuned model quirk)
+                full_response = strip_leading_thinking(&full_response);
+
                 // For WebSocket clients, include audio attachment if available
                 let mut attachments = Vec::new();
                 if message.channel == ChannelType::WebSocket {
@@ -308,4 +311,31 @@ fn strip_expression_tags(text: &str) -> String {
         result = result.replace("  ", " ");
     }
     result.trim().to_string()
+}
+
+/// Strip leading thinking paragraphs that the fine-tuned model emits without `<think>` tags.
+///
+/// Pattern: response starts with third-person analysis (e.g. "用户问...", "需要检查...")
+/// followed by a blank line, then the actual response. Strips everything before the blank line.
+fn strip_leading_thinking(text: &str) -> String {
+    let trimmed = text.trim_start();
+    let thinking_prefixes = [
+        "用户", "需要", "这是", "让我", "好的", "我需要",
+        "分析", "思考", "判断", "检查", "确认", "看看",
+    ];
+    let starts_with_thinking = thinking_prefixes
+        .iter()
+        .any(|p| trimmed.starts_with(p));
+    if !starts_with_thinking {
+        return text.to_string();
+    }
+    // Find double newline (blank line separator)
+    if let Some(pos) = trimmed.find("\n\n") {
+        let rest = trimmed[pos..].trim_start();
+        if !rest.is_empty() {
+            return rest.to_string();
+        }
+    }
+    // No blank line separator — return as-is (entire response might be legitimate)
+    text.to_string()
 }

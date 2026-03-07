@@ -162,18 +162,23 @@ class OpenAIProvider(BaseProvider):
             kwargs["stream"] = True
             stream = await self.client.chat.completions.create(**kwargs)
 
-            in_think = False
+            in_block = False
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
                     content = chunk.choices[0].delta.content
-                    # Strip thinking blocks (e.g. Qwen3.5 <think>...</think>)
-                    if "<think>" in content:
-                        in_think = True
-                        content = content.split("<think>")[0]
-                    if "</think>" in content:
-                        in_think = False
-                        content = content.split("</think>", 1)[1]
-                    if in_think:
+                    # Strip <think>, <tool_call>, <toolcall> blocks
+                    for open_tag, close_tag in [
+                        ("<think>", "</think>"),
+                        ("<tool_call>", "</tool_call>"),
+                        ("<toolcall>", "</toolcall>"),
+                    ]:
+                        if open_tag in content:
+                            in_block = True
+                            content = content.split(open_tag)[0]
+                        if close_tag in content:
+                            in_block = False
+                            content = content.split(close_tag, 1)[1]
+                    if in_block:
                         continue
                     if content:
                         yield content
