@@ -41,11 +41,14 @@ def _mcp_tools_to_openai(tools: list[dict]) -> list[dict]:
 
 
 class OpenAIProvider(BaseProvider):
-    def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None):
+    def __init__(self, api_key: str, model: str | None = None, base_url: str | None = None,
+                 extra_body: dict | None = None, defaults: dict | None = None):
         import openai
 
         self.client = openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.model = model or DEFAULT_MODEL
+        self.extra_body = extra_body or {}
+        self.defaults = defaults or {}
         logger.info(f"OpenAI provider ready: model={self.model}, base_url={base_url or 'default'}")
 
     async def generate(
@@ -101,6 +104,11 @@ class OpenAIProvider(BaseProvider):
             "messages": messages,
             "max_tokens": 4096,
         }
+        # Apply provider-specific defaults (e.g. temperature, top_p, presence_penalty)
+        for k, v in self.defaults.items():
+            kwargs.setdefault(k, v)
+        if self.extra_body:
+            kwargs["extra_body"] = self.extra_body
 
         # Use native function calling when tools are provided
         openai_tools = None
@@ -139,6 +147,18 @@ class OpenAIProvider(BaseProvider):
             kwargs["stream"] = True
             stream = await self.client.chat.completions.create(**kwargs)
 
+            in_think = False
             async for chunk in stream:
                 if chunk.choices and chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+                    content = chunk.choices[0].delta.content
+                    # Strip thinking blocks (e.g. Qwen3.5 <think>...</think>)
+                    if "<think>" in content:
+                        in_think = True
+                        content = content.split("<think>")[0]
+                    if "</think>" in content:
+                        in_think = False
+                        content = content.split("</think>", 1)[1]
+                    if in_think:
+                        continue
+                    if content:
+                        yield content

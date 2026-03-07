@@ -60,7 +60,7 @@ def resolve_provider_configs(config: dict) -> dict[str, dict]:
 
     resolved = {"_default": default_provider}
 
-    for name in ("anthropic", "openai", "deepseek", "ollama"):
+    for name in ("anthropic", "openai", "deepseek", "ollama", "kokoron"):
         section = providers_section.get(name)
         if section is None:
             continue

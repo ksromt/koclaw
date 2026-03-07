@@ -65,6 +65,23 @@ class LLMRouter:
             except ImportError:
                 logger.warning("openai package not installed")
 
+        # Kokoron (local fine-tuned model, OpenAI-compatible API)
+        kokoron_cfg = self._configs.get("kokoron", {})
+        if kokoron_cfg.get("base_url"):
+            try:
+                from .providers.openai_provider import OpenAIProvider
+
+                self._providers["kokoron"] = OpenAIProvider(
+                    api_key=kokoron_cfg.get("api_key", "not-needed"),
+                    model=kokoron_cfg.get("model", "kokoron"),
+                    base_url=kokoron_cfg["base_url"],
+                    extra_body={"chat_template_kwargs": {"enable_thinking": True}},
+                    defaults={"temperature": 0.9, "top_p": 0.9, "presence_penalty": 0.5},
+                )
+                logger.info("Kokoron provider initialized (local fine-tuned model)")
+            except ImportError:
+                logger.warning("openai package not installed, Kokoron provider unavailable")
+
         if not self._providers:
             logger.warning("No LLM providers configured. Using echo mode.")
 
