@@ -162,23 +162,41 @@ class OpenAIProvider(BaseProvider):
             kwargs["stream"] = True
             stream = await self.client.chat.completions.create(**kwargs)
 
+            _TAGS = [("<think>", "</think>"), ("<tool_call>", "</tool_call>"),
+                     ("<toolcall>", "</toolcall>")]
             in_block = False
             async for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
-                    # Strip <think>, <tool_call>, <toolcall> blocks
-                    for open_tag, close_tag in [
-                        ("<think>", "</think>"),
-                        ("<tool_call>", "</tool_call>"),
-                        ("<toolcall>", "</toolcall>"),
-                    ]:
-                        if open_tag in content:
-                            in_block = True
-                            content = content.split(open_tag)[0]
+                if not (chunk.choices and chunk.choices[0].delta.content):
+                    continue
+                content = chunk.choices[0].delta.content
+
+                if in_block:
+                    # Suppressing — only look for close tags
+                    for _, close_tag in _TAGS:
                         if close_tag in content:
                             in_block = False
                             content = content.split(close_tag, 1)[1]
+                            break
                     if in_block:
                         continue
                     if content:
                         yield content
+                    continue
+
+                # Not suppressing — check for open tags
+                for open_tag, close_tag in _TAGS:
+                    if open_tag in content:
+                        before = content.split(open_tag, 1)[0]
+                        if before:
+                            yield before
+                        # Check if close tag also in same chunk
+                        after_open = content.split(open_tag, 1)[1]
+                        if close_tag in after_open:
+                            content = after_open.split(close_tag, 1)[1]
+                        else:
+                            in_block = True
+                            content = ""
+                        break
+
+                if content:
+                    yield content
