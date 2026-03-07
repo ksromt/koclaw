@@ -14,12 +14,12 @@ from .base import BaseProvider, GenerateChunk, ToolCallRequest
 
 DEFAULT_MODEL = "gpt-4o"
 
-_THINK_RE = re.compile(r"<think>[\s\S]*?</think>", re.DOTALL)
+_THINK_RE = re.compile(r"<think>[\s\S]*?</think>|<think>[\s\S]*$|^[\s\S]*?</think>")
 
 
 def _strip_think_tags(text: str) -> str:
-    """Remove <think>...</think> blocks from text."""
-    return _THINK_RE.sub("", text)
+    """Remove <think>...</think> blocks from text, including unclosed tags."""
+    return _THINK_RE.sub("", text).strip()
 
 
 def _mcp_tools_to_openai(tools: list[dict]) -> list[dict]:

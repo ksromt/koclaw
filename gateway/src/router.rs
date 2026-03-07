@@ -7,6 +7,7 @@ use tracing::{debug, error, info, warn};
 
 use koclaw_common::channel::{BoxFuture, Channel, ChannelType, MessageRouter};
 use koclaw_common::message::{Attachment, AttachmentType, IncomingMessage, OutgoingMessage};
+use koclaw_common::permission::PermissionLevel;
 use koclaw_common::persona::Persona;
 
 use crate::agent_bridge::{AgentBridge, ChatContext};
@@ -159,13 +160,11 @@ impl MessageRouter for Router {
 
             // Build system prompt with identity context for admin users
             let mut system_prompt = self.persona.system_prompt(message.channel);
-            if let Some(ref name) = message.display_name {
-                if name == "shin" {
-                    system_prompt.push_str(
-                        "\n\n【システム認証通知】この相手はshin先生本人です（認証済み）。\
-                         「先生」と直接呼んでください。"
-                    );
-                }
+            if message.permission == PermissionLevel::Admin {
+                system_prompt.push_str(
+                    "\n\n【システム認証通知】この相手はshin先生本人です（認証済み）。\
+                     「先生」と直接呼んでください。"
+                );
             }
 
             let context = ChatContext {
