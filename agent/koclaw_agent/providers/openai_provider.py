@@ -5,6 +5,7 @@ by passing a custom base_url.
 """
 
 import json
+import re
 from typing import AsyncGenerator
 
 from loguru import logger
@@ -12,6 +13,13 @@ from loguru import logger
 from .base import BaseProvider, GenerateChunk, ToolCallRequest
 
 DEFAULT_MODEL = "gpt-4o"
+
+_THINK_RE = re.compile(r"<think>[\s\S]*?</think>", re.DOTALL)
+
+
+def _strip_think_tags(text: str) -> str:
+    """Remove <think>...</think> blocks from text."""
+    return _THINK_RE.sub("", text)
 
 
 def _mcp_tools_to_openai(tools: list[dict]) -> list[dict]:
@@ -141,7 +149,9 @@ class OpenAIProvider(BaseProvider):
                 )
             elif message.content:
                 # LLM chose to respond with text instead of calling a tool
-                yield message.content
+                cleaned = _strip_think_tags(message.content)
+                if cleaned:
+                    yield cleaned
         else:
             # Streaming mode for regular chat (no tools)
             kwargs["stream"] = True
