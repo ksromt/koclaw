@@ -63,3 +63,23 @@ model = "llama3"
 chromadb_path = "./data/chromadb"
 embedding_model = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 finetune_candidates_path = "./data/finetune_candidates"
+
+# ── Autonomous Consciousness Loop ──
+[scheduler.autonomous]
+enabled = true
+default_interval_secs = 1800      # 30 minutes between thinking cycles
+min_interval_secs = 60            # Minimum interval Kokoron can set
+max_interval_secs = 10800         # Maximum interval (3 hours)
+state_file = "./data/state/autonomous_state.json"
+channel = "telegram"              # Channel for proactive messages
+target_id = ""                    # Admin user ID for proactive messages
+active_hours_start = "08:00"
+active_hours_end = "23:00"
+timezone = "Asia/Tokyo"
+max_daily_messages = 5            # Max proactive messages per day
+min_message_interval_secs = 3600  # Min 1 hour between proactive messages
+
+# ── Startup Self-Check ──
+[startup]
+self_check_enabled = true
+inference_url = "http://127.0.0.1:18800/v1"

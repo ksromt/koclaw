@@ -15,6 +15,7 @@ import json
 import websockets
 from loguru import logger
 
+from .autonomous import AutonomousManager
 from .expression import extract_expressions
 from .llm_router import LLMRouter
 from .mcp_host.server_manager import McpServerManager
@@ -24,6 +25,7 @@ from .memory import FileMemory
 from .memory_tools import MEMORY_TOOLS, is_memory_tool
 from .persona import Persona
 from .scheduler_tools import SCHEDULER_TOOLS, is_scheduler_tool
+from .self_check import startup_self_check
 from .self_improving import SelfImproving, LearningEntry
 
 try:
@@ -75,9 +77,11 @@ class AgentBridge:
         provider_configs: dict | None = None,
         mcp_configs: dict | None = None,
         memory_config: dict | None = None,
+        config: dict | None = None,
     ):
         self.host = host
         self.port = port
+        self._config = config or {}
         self.llm_router = LLMRouter(provider_configs)
         self.memory = FileMemory()
         self.persona = Persona.from_yaml_file()
@@ -94,6 +98,15 @@ class AgentBridge:
 
         # Pending scheduler request futures (session_id -> asyncio.Future)
         self._scheduler_pending: dict[str, asyncio.Future] = {}
+
+        # Active WebSocket reference (for autonomous proactive messaging)
+        self._active_ws = None
+
+        # Startup self-check info (populated in start())
+        self._self_check_info: str = ""
+
+        # Autonomous consciousness loop (initialized in start())
+        self.autonomous: AutonomousManager | None = None
 
         # Tool permission enforcement
         perm_mode = mcp_configs.get("permission_mode", "blocklist")
@@ -193,6 +206,7 @@ class AgentBridge:
         deadlock (5 s timeout).
         """
         logger.info("Gateway connected")
+        self._active_ws = websocket
         # Track spawned tasks so we can clean up on disconnect
         active_tasks: set[asyncio.Task] = set()
 
@@ -249,6 +263,7 @@ class AgentBridge:
         except websockets.exceptions.ConnectionClosed:
             logger.info("Gateway disconnected")
         finally:
+            self._active_ws = None
             # Cancel any still-running handlers on disconnect
             for task in active_tasks:
                 task.cancel()
@@ -302,6 +317,10 @@ class AgentBridge:
             mcp_tools = mcp_tools + SCHEDULER_TOOLS
             if self.rag_memory:
                 mcp_tools = mcp_tools + MEMORY_TOOLS
+
+        # Inject startup self-check info
+        if self._self_check_info:
+            system_prompt += "\n" + self._self_check_info
 
         # Auto-inject related long-term memories (RAG)
         rag_context = ""
@@ -873,6 +892,33 @@ class AgentBridge:
         chat_msg = {**message, "type": "chat", "text": text, "audio_response": True}
         await self._handle_chat(websocket, chat_msg)
 
+    async def _send_proactive(
+        self, channel: str, target_id: str, message: str
+    ):
+        """Send a proactive message via Gateway's scheduler (one-shot job)."""
+        ws = self._active_ws
+        if ws is None:
+            logger.warning("No active WebSocket, cannot send proactive message")
+            return
+
+        session_id = f"{channel}:{target_id}"
+        request = {
+            "type": "scheduler_request",
+            "session_id": session_id,
+            "action": "create",
+            "job": {
+                "name": "autonomous_message",
+                "message": message,
+                "channel": channel,
+                "target_id": target_id,
+                "one_shot": True,
+                "delay_seconds": 1,
+                "timezone": "Asia/Tokyo",
+            },
+        }
+        await ws.send(json.dumps(request))
+        logger.info(f"Proactive message queued: {message[:80]}")
+
     async def start(self):
         """Start the WebSocket bridge server."""
         logger.info(f"Agent bridge starting on ws://{self.host}:{self.port}")
@@ -884,6 +930,32 @@ class AgentBridge:
             tools = await self.mcp_manager.list_all_tools()
             logger.info(f"MCP ready: {len(tools)} tool(s) available")
 
+        # Run startup self-check
+        startup_cfg = self._config.get("startup", {})
+        if startup_cfg.get("self_check_enabled", False):
+            inference_url = startup_cfg.get(
+                "inference_url", "http://127.0.0.1:18800/v1"
+            )
+            try:
+                self._self_check_info = await startup_self_check(
+                    inference_url, self.rag_memory
+                )
+            except Exception as e:
+                logger.warning(f"Startup self-check failed: {e}")
+
+        # Initialize autonomous consciousness loop
+        auto_cfg = self._config.get("scheduler", {}).get("autonomous", {})
+        if auto_cfg.get("enabled", False):
+            self.autonomous = AutonomousManager(
+                config=auto_cfg,
+                llm_router=self.llm_router,
+                rag_memory=self.rag_memory,
+                persona=self.persona,
+                send_message_callback=self._send_proactive,
+                execute_memory_tool=self._execute_memory_tool,
+            )
+            self.autonomous.start()
+
         try:
             async with websockets.serve(
                 self.handle_connection,
@@ -893,4 +965,6 @@ class AgentBridge:
                 logger.info("Agent bridge ready")
                 await asyncio.Future()  # Run forever
         finally:
+            if self.autonomous:
+                await self.autonomous.stop()
             await self.mcp_manager.shutdown()

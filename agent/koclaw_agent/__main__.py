@@ -23,6 +23,7 @@ def main():
         provider_configs=provider_configs,
         mcp_configs=mcp_configs,
         memory_config=memory_config,
+        config=config,
     )
 
     asyncio.run(bridge.start())
