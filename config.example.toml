@@ -37,6 +37,11 @@ sandbox = true  # Use sandbox environment for testing
 enabled = false
 token_env = "DISCORD_BOT_TOKEN"
 
+[channels.websocket]
+enabled = true
+host = "127.0.0.1"
+port = 18791
+
 # LLM provider configuration (used by Python Agent)
 [providers]
 default = "anthropic"
@@ -57,6 +62,41 @@ base_url = "https://api.deepseek.com/v1"
 [providers.ollama]
 base_url = "http://localhost:11434"
 model = "llama3"
+
+# Local inference server (vLLM / llama.cpp / etc.)
+# [providers.kokoron]
+# base_url = "http://127.0.0.1:18800/v1"
+# model = "kokoron"
+# api_key = "not-needed"
+
+# ── MCP Tool Servers ──
+[mcp]
+permission_mode = "blocklist"   # "blocklist" or "allowlist"
+blocked_tools = []
+# allowed_tools = ["get_current_time", "read_file"]  # only for allowlist mode
+
+[mcp.servers.time]
+command = "uvx"
+args = ["mcp-server-time"]
+
+# [mcp.servers.filesystem]
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "./workspace"]
+
+# ── Scheduler ──
+[scheduler]
+enabled = true
+storage_path = "./data/scheduler_jobs.json"
+tick_interval_ms = 1000
+
+[scheduler.heartbeat]
+enabled = false
+interval_secs = 1800
+channel = "telegram"
+target_id = ""
+active_hours_start = "09:00"
+active_hours_end = "22:00"
+timezone = "Asia/Tokyo"
 
 # Long-term memory (ChromaDB + sentence-transformers)
 [memory]
