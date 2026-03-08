@@ -15,6 +15,7 @@ from typing import Awaitable, Callable
 
 from loguru import logger
 
+from .calendar_tools import CALENDAR_TOOLS, is_calendar_tool
 from .mcp_host.tool_prompt import build_tool_prompt, parse_tool_call
 from .memory_tools import MEMORY_TOOLS, is_memory_tool
 from .providers.openai_provider import _strip_internal_tags
@@ -57,6 +58,7 @@ class AutonomousManager:
         persona,
         send_message_callback: Callable[[str, str, str], Awaitable[None]],
         execute_memory_tool: Callable[[str, dict], Awaitable[str]],
+        execute_calendar_tool: Callable[[str, dict], Awaitable[str]] | None = None,
     ):
         self._config = config
         self._llm_router = llm_router
@@ -64,6 +66,7 @@ class AutonomousManager:
         self._persona = persona
         self._send_message = send_message_callback
         self._execute_memory_tool = execute_memory_tool
+        self._execute_calendar_tool = execute_calendar_tool
 
         # Interval bounds from config
         self._min_interval = config.get("min_interval_secs", 60)
@@ -172,7 +175,7 @@ class AutonomousManager:
                 logger.warning(f"Failed to load memories for thinking: {e}")
 
         # Build tool prompt for autonomous tools
-        autonomous_tools = MEMORY_TOOLS + [SCHEDULE_UPDATE_TOOL]
+        autonomous_tools = MEMORY_TOOLS + [SCHEDULE_UPDATE_TOOL] + CALENDAR_TOOLS
         tool_prompt = build_tool_prompt(autonomous_tools)
 
         # Build the thinking prompt
@@ -247,6 +250,10 @@ class AutonomousManager:
                 )
             elif is_memory_tool(tool_name):
                 tool_result = await self._execute_memory_tool(
+                    tool_name, tool_args
+                )
+            elif is_calendar_tool(tool_name) and self._execute_calendar_tool:
+                tool_result = await self._execute_calendar_tool(
                     tool_name, tool_args
                 )
             else:

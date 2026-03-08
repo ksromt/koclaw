@@ -16,6 +16,8 @@ import websockets
 from loguru import logger
 
 from .autonomous import AutonomousManager
+from .calendar_store import CalendarStore
+from .calendar_tools import CALENDAR_TOOLS, is_calendar_tool
 from .expression import extract_expressions
 from .llm_router import LLMRouter
 from .mcp_host.server_manager import McpServerManager
@@ -89,6 +91,7 @@ class AgentBridge:
         self.tts = self._init_tts()
         self.asr = self._init_asr()
         self.rag_memory = self._init_rag_memory(memory_config or {})
+        self.calendar = CalendarStore()
 
         # MCP tool server management
         self.mcp_manager = McpServerManager()
@@ -315,6 +318,7 @@ class AgentBridge:
         # Add pseudo-tools for Authenticated+ users
         if permission != "Public":
             mcp_tools = mcp_tools + SCHEDULER_TOOLS
+            mcp_tools = mcp_tools + CALENDAR_TOOLS
             if self.rag_memory:
                 mcp_tools = mcp_tools + MEMORY_TOOLS
 
@@ -343,6 +347,24 @@ class AgentBridge:
             except Exception as e:
                 logger.warning(f"RAG search failed: {e}")
 
+        # Auto-inject upcoming calendar events
+        calendar_context = ""
+        try:
+            upcoming = await self.calendar.get_upcoming(days=3, limit=5)
+            if upcoming:
+                lines = ["", "【今後の予定】"]
+                for evt in upcoming:
+                    line = f"- {evt['date']}"
+                    if evt.get("time"):
+                        line += f" {evt['time']}"
+                    line += f" {evt['title']}"
+                    if evt.get("location"):
+                        line += f"（{evt['location']}）"
+                    lines.append(line)
+                calendar_context = "\n".join(lines) + "\n"
+        except Exception as e:
+            logger.warning(f"Calendar context failed: {e}")
+
         # Add user environment context
         env_context = self._build_env_context()
 
@@ -364,7 +386,7 @@ class AgentBridge:
             tool_prompt = ""
             tools_for_api = mcp_tools if mcp_tools else None
 
-        full_system = system_prompt + rag_context + thinking_context + env_context + tool_prompt
+        full_system = system_prompt + rag_context + calendar_context + thinking_context + env_context + tool_prompt
 
         # LLM generation with tool execution loop (max 3 iterations)
         full_response = ""
@@ -459,6 +481,12 @@ class AgentBridge:
                     websocket, tool_name, tool_args, session_id, channel, message
                 )
                 logger.info(f"Scheduler tool result: {tool_result[:200]}")
+            elif is_calendar_tool(tool_name):
+                logger.info(f"Executing calendar tool: {tool_name}({tool_args})")
+                tool_result = await self._execute_calendar_tool(
+                    tool_name, tool_args
+                )
+                logger.info(f"Calendar tool result: {tool_result[:200]}")
             elif is_memory_tool(tool_name):
                 logger.info(f"Executing memory tool: {tool_name}({tool_args})")
                 tool_result = await self._execute_memory_tool(
@@ -664,6 +692,58 @@ class AgentBridge:
 
         except Exception as e:
             logger.error(f"Memory tool error: {e}")
+            return f"Error: {e}"
+
+    async def _execute_calendar_tool(self, tool_name: str, tool_args: dict) -> str:
+        """Execute a calendar pseudo-tool against the local CalendarStore."""
+        action = tool_name.removeprefix("calendar_")
+        try:
+            if action == "add_event":
+                event_id = await self.calendar.add_event(
+                    title=tool_args["title"],
+                    date=tool_args["date"],
+                    time=tool_args.get("time"),
+                    end_time=tool_args.get("end_time"),
+                    location=tool_args.get("location"),
+                    notes=tool_args.get("notes"),
+                )
+                return f"予定を追加しました (ID: {event_id})"
+
+            elif action == "list_events":
+                events = await self.calendar.list_events(
+                    from_date=tool_args.get("from_date"),
+                    to_date=tool_args.get("to_date"),
+                    limit=tool_args.get("limit", 10),
+                )
+                if not events:
+                    return "該当する予定はありません。"
+                lines = []
+                for evt in events:
+                    line = f"- [{evt['id']}] {evt['date']}"
+                    if evt.get("time"):
+                        line += f" {evt['time']}"
+                    line += f" {evt['title']}"
+                    if evt.get("location"):
+                        line += f"（{evt['location']}）"
+                    if evt.get("notes"):
+                        line += f" — {evt['notes']}"
+                    lines.append(line)
+                return f"予定一覧 ({len(events)}件):\n" + "\n".join(lines)
+
+            elif action == "update_event":
+                event_id = tool_args.pop("event_id", "")
+                ok = await self.calendar.update_event(event_id, **tool_args)
+                return "予定を更新しました。" if ok else "予定IDが見つかりません。"
+
+            elif action == "delete_event":
+                ok = await self.calendar.delete_event(tool_args["event_id"])
+                return "予定を削除しました。" if ok else "予定IDが見つかりません。"
+
+            else:
+                return f"Error: Unknown calendar action: {action}"
+
+        except Exception as e:
+            logger.error(f"Calendar tool error: {e}")
             return f"Error: {e}"
 
     async def _execute_scheduler_tool(
@@ -962,6 +1042,7 @@ class AgentBridge:
                 persona=self.persona,
                 send_message_callback=self._send_proactive,
                 execute_memory_tool=self._execute_memory_tool,
+                execute_calendar_tool=self._execute_calendar_tool,
             )
             self.autonomous.start()
 
