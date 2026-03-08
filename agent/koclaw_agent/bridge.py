@@ -346,6 +346,15 @@ class AgentBridge:
         # Add user environment context
         env_context = self._build_env_context()
 
+        # Inject recent autonomous thinking summary
+        thinking_context = ""
+        if self.autonomous and self.autonomous.last_thinking_summary:
+            thinking_context = (
+                "\n\n【直近の自主思考メモ】\n"
+                "以下はあなたが最近の自主思考時間に行った活動の記録です。\n"
+                f"{self.autonomous.last_thinking_summary}\n"
+            )
+
         # Decide tool passing strategy: native FC or prompt-based
         use_native_tools = self.llm_router.supports_native_tools()
         if mcp_tools and not use_native_tools:
@@ -355,7 +364,7 @@ class AgentBridge:
             tool_prompt = ""
             tools_for_api = mcp_tools if mcp_tools else None
 
-        full_system = system_prompt + rag_context + env_context + tool_prompt
+        full_system = system_prompt + rag_context + thinking_context + env_context + tool_prompt
 
         # LLM generation with tool execution loop (max 3 iterations)
         full_response = ""

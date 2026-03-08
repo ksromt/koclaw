@@ -91,6 +91,7 @@ class AutonomousManager:
         self._daily_message_count: int = 0
         self._last_message_date: str | None = None
         self._last_message_time: str | None = None
+        self._last_thinking_summary: str | None = None
 
         self._state_file = Path(
             config.get("state_file", "./data/state/autonomous_state.json")
@@ -141,6 +142,11 @@ class AutonomousManager:
         now = datetime.now()
         now_str = now.strftime("%H:%M")
         return self._active_start <= now_str <= self._active_end
+
+    @property
+    def last_thinking_summary(self) -> str | None:
+        """Most recent non-IDLE thinking summary for chat context injection."""
+        return self._last_thinking_summary
 
     # ── Thinking ──
 
@@ -201,6 +207,7 @@ class AutonomousManager:
         # LLM generation with tool execution loop (max 5 iterations)
         current_text = "自由思考の時間です。記憶を振り返り、判断してください。"
         full_response = ""
+        thinking_actions: list[str] = []
 
         for _iteration in range(5):
             iteration_response = ""
@@ -247,6 +254,7 @@ class AutonomousManager:
                 logger.warning(f"Unknown tool in autonomous thinking: {tool_name}")
 
             logger.info(f"Autonomous tool result: {tool_result[:200]}")
+            thinking_actions.append(f"{tool_name}: {tool_result[:150]}")
 
             # Feed result back for next iteration
             current_text = f"[Tool Result: {tool_name}]\n{tool_result}"
@@ -254,6 +262,35 @@ class AutonomousManager:
         # Update state
         self._thinking_count += 1
         self._last_thinking_time = datetime.now().isoformat()
+
+        # Build and persist thinking summary
+        is_idle = "[IDLE]" in full_response and not thinking_actions
+        if not is_idle and (thinking_actions or full_response.strip()):
+            summary_lines = []
+            for action in thinking_actions:
+                summary_lines.append(f"- {action}")
+            clean_text = full_response.replace("[IDLE]", "").strip()[:300]
+            if clean_text:
+                summary_lines.append(f"考えたこと: {clean_text}")
+
+            self._last_thinking_summary = (
+                f"時刻: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+                + "\n".join(summary_lines)
+            )
+
+            # Save to RAG as self-reflection for cross-session memory
+            if self._rag_memory and summary_lines:
+                try:
+                    await self._rag_memory.save(
+                        content="【自主思考記録】" + "\n".join(summary_lines),
+                        importance=2,
+                        category="self_reflection",
+                        tags=["autonomous_thinking"],
+                        source_session="autonomous",
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save thinking reflection: {e}")
+
         self._save_state()
 
         # Check for proactive message
@@ -351,6 +388,7 @@ class AutonomousManager:
             self._daily_message_count = data.get("daily_message_count", 0)
             self._last_message_date = data.get("last_message_date")
             self._last_message_time = data.get("last_message_time")
+            self._last_thinking_summary = data.get("last_thinking_summary")
             logger.info(
                 f"Autonomous state loaded: interval={self._interval_secs}s, "
                 f"count={self._thinking_count}"
@@ -369,6 +407,7 @@ class AutonomousManager:
             "daily_message_count": self._daily_message_count,
             "last_message_date": self._last_message_date,
             "last_message_time": self._last_message_time,
+            "last_thinking_summary": self._last_thinking_summary,
         }
         try:
             self._state_file.write_text(
